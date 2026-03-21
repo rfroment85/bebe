@@ -1,0 +1,2790 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Financiel Vision</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Serif+Display&family=DM+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<!-- ORDER MATTERS: prop-types before Recharts -->
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow-x:hidden}
+body{font-family:'DM Sans',sans-serif;background:#060810;color:#DCE8F5;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:#080B14}
+::-webkit-scrollbar-thumb{background:#1A2840;border-radius:3px}
+input,button{font-family:inherit;outline:none}
+table{border-collapse:collapse;width:100%}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideRight{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideLeft{from{transform:translateX(-24px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
+.fu{animation:fadeUp .35s ease both}
+.sr{animation:slideRight .28s cubic-bezier(.22,.68,0,1.2) both}
+.sl{animation:slideLeft .22s ease both}
+.row-drill:hover{background:rgba(200,145,58,.06)!important;cursor:pointer}
+.row-drill:hover td:first-child{color:#E8AD55!important}
+.btn-ghost{background:transparent;border:1px solid #1A2840;border-radius:8px;padding:7px 14px;color:#6E87A2;font-size:12px;cursor:pointer;transition:all .2s}
+.btn-ghost:hover{border-color:#2D4060;color:#DCE8F5;background:#0E1525}
+.entry-row:hover{background:rgba(61,130,246,.05)!important}
+.tag{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useCallback,useRef,useMemo,useEffect}=React;
+const{BarChart,Bar,XAxis,YAxis,Tooltip,ResponsiveContainer,PieChart,Pie,Cell,CartesianGrid,Legend,AreaChart,Area,LineChart,Line,ComposedChart,ReferenceLine}=Recharts;
+
+// ═══════════════════════════════ PALETTE ═══════════════════════════════════
+const C={
+  bg:'#060810',surf:'#09101C',card:'#0C1422',border:'#131F34',borderL:'#1A2C46',
+  text:'#DCE8F5',sub:'#607D9B',muted:'#243550',
+  gold:'#C8913A',goldL:'#E8AD55',
+  blue:'#3D82F6',blueL:'#60A5FA',
+  green:'#1CC98A',red:'#EF4444',purple:'#8B5CF6',orange:'#F07240',teal:'#06B6D4',
+};
+const PIE=[C.gold,C.blue,C.green,C.purple,C.orange,'#EC4899',C.teal,'#84CC16'];
+
+// ═══════════════════════════════ DEMO DATA ═════════════════════════════════
+function generateDemoFEC(year,caBase,seed=1){
+  const rng=(s)=>{let x=Math.sin(s)*10000;return x-Math.floor(x);};
+  const lines=[];
+  let eNum=1;
+  const push=(compte,lib,date,ecLib,debit,credit)=>{
+    lines.push(`${compte}\t${lib}\t${year}${date}\t${ecLib}\t${debit>0?debit.toFixed(2):'0.00'}\t${credit>0?credit.toFixed(2):'0.00'}`);
+    eNum++;
+  };
+  // CA distribution mensuelle (seasonalité services)
+  const caSeasons=[0.055,0.065,0.08,0.085,0.09,0.10,0.085,0.075,0.08,0.095,0.09,0.10];
+  const months=[
+    {m:'01',d:'31'},{m:'02',d:'28'},{m:'03',d:'31'},{m:'04',d:'30'},
+    {m:'05',d:'31'},{m:'06',d:'30'},{m:'07',d:'31'},{m:'08',d:'31'},
+    {m:'09',d:'30'},{m:'10',d:'31'},{m:'11',d:'30'},{m:'12',d:'31'}
+  ];
+
+  months.forEach(({m,d},i)=>{
+    const ca=Math.round(caBase*caSeasons[i]);
+    const v=rng(seed*100+i);
+    // ── Ventes de services (706 + 411 HT uniquement, pas de TVA pour simplifier)
+    const nbFact=Math.max(2,Math.round(3+v*4));
+    const parts=[];
+    let remain=ca;
+    for(let f=0;f<nbFact-1;f++){
+      const p=Math.round(remain/(nbFact-f)*(0.7+rng(seed*200+i*10+f)*0.6));
+      parts.push(Math.max(1000,p));
+      remain-=parts[parts.length-1];
+    }
+    parts.push(Math.max(500,remain));
+    parts.forEach((p,f)=>{
+      const clientIdx=Math.floor(rng(seed*300+i*20+f)*8)+1;
+      const ref=`FACT-${year}${m}-${String(f+1).padStart(2,'0')}`;
+      push('706010','Prestations de services',`${m}${d}`,ref,0,p);
+      push('411010','Clients',`${m}${d}`,ref,p,0);
+    });
+    // ── Encaissements clients (répartis sur plusieurs jours)
+    const enc=Math.round(ca*(0.85+rng(seed*800+i)*0.2));
+    const encDays=[5,8,12,16,22,26].slice(0,3+Math.floor(rng(seed*810+i)*3));
+    let remEnc=enc;
+    encDays.forEach((day,fi)=>{
+      const part=fi<encDays.length-1?Math.round(remEnc/(encDays.length-fi)*(0.6+rng(seed*820+i*10+fi)*0.8)):remEnc;
+      if(part>0){
+        const dd=String(Math.min(day,parseInt(d))).padStart(2,'0');
+        const ref=`ENC CLI${String(fi+1).padStart(2,'0')}`;
+        push('512010','Banque CIC',m+dd,ref,part,0);
+        push('411010','Clients',m+dd,ref,0,part);
+        remEnc-=part;
+      }
+    });
+    // ── Achats consommables (606)
+    const ach=Math.round(caBase*0.04/12*(0.8+rng(seed*400+i)*0.4));
+    if(ach>0){
+      push('606010','Achats non stockés',`${m}10`,'FOURNITURES',ach,0);
+      push('401010','Fournisseurs divers',`${m}10`,'FOURNITURES',0,ach);
+      // Règlement fournisseur
+      push('401010','Fournisseurs divers',`${m}22`,'REGLT FOURNISSEURS',ach,0);
+      push('512010','Banque CIC',`${m}22`,'REGLT FOURNISSEURS',0,ach);
+    }
+    // ── Loyer (613) — facturation + règlement séparés
+    push('613010','Loyers',`${m}01`,'LOYER BUREAUX',3000,0);
+    push('401020','Bailleur SCI',`${m}01`,'LOYER BUREAUX',0,3000);
+    push('401020','Bailleur SCI',`${m}05`,'VIRT LOYER',3000,0);
+    push('512010','Banque CIC',`${m}05`,'VIRT LOYER',0,3000);
+    // ── Assurances (616) — trimestriel
+    if(i%3===0){
+      push('616010','Primes assurances',`${m}10`,'AXA RC PRO TRIM.',1200,0);
+      push('401030','AXA ASSURANCES',`${m}10`,'AXA RC PRO TRIM.',0,1200);
+      push('401030','AXA ASSURANCES',`${m}12`,'PRELEVEMENT AXA',1200,0);
+      push('512010','Banque CIC',`${m}12`,'PRELEVEMENT AXA',0,1200);
+    }
+    // ── Honoraires (622) — mensuel pair
+    if(i%2===0){
+      const hon=Math.round(800+rng(seed*500+i)*400);
+      push('622010','Honoraires',`${m}15`,'EXPERTISE',hon,0);
+      push('401040','CABINET EXPERT',`${m}15`,'EXPERTISE',0,hon);
+      push('401040','CABINET EXPERT',`${m}20`,'REGLT EXPERT',hon,0);
+      push('512010','Banque CIC',`${m}20`,'REGLT EXPERT',0,hon);
+    }
+    // ── Frais télécoms (626)
+    push('626010','Télécoms',`${m}05`,'ABONNEMENTS TELCO',320,0);
+    push('401060','ORANGE PRO',`${m}05`,'ABONNEMENTS TELCO',0,320);
+    push('401060','ORANGE PRO',`${m}08`,'PRELEVEMENT ORANGE',320,0);
+    push('512010','Banque CIC',`${m}08`,'PRELEVEMENT ORANGE',0,320);
+    // ── Logiciels/SI (627)
+    push('627010','Services SI',`${m}15`,'LOGICIELS',580,0);
+    push('401070','INFORMATIQUE',`${m}15`,'LOGICIELS',0,580);
+    push('401070','INFORMATIQUE',`${m}18`,'REGLT LOGICIELS',580,0);
+    push('512010','Banque CIC',`${m}18`,'REGLT LOGICIELS',0,580);
+    // ── Déplacements (625) — CB directe banque
+    const dep=Math.round(300+rng(seed*600+i)*400);
+    push('625010','Déplacements',`${m}07`,'CB FRAIS',Math.round(dep*0.5),0);
+    push('512010','Banque CIC',`${m}07`,'CB FRAIS',0,Math.round(dep*0.5));
+    push('625010','Déplacements',`${m}18`,'CB FRAIS',dep-Math.round(dep*0.5),0);
+    push('512010','Banque CIC',`${m}18`,'CB FRAIS',0,dep-Math.round(dep*0.5));
+    // ── Personnel (641) — salaire → banque le 25
+    const salBrut=Math.round(caBase*0.34/12);
+    push('641010','Salaires bruts',`${m}${d}`,'PAIE',salBrut,0);
+    push('421010','Personnel dû',`${m}${d}`,'PAIE',0,salBrut);
+    push('421010','Personnel dû',`${m}25`,'VIRT SALAIRES',salBrut,0);
+    push('512010','Banque CIC',`${m}25`,'VIRT SALAIRES',0,salBrut);
+    // ── Charges sociales (645) — patronales
+    const cs=Math.round(salBrut*0.45);
+    push('645010','Cot. soc. patronales',`${m}${d}`,'URSSAF',cs,0);
+    push('431010','URSSAF',`${m}${d}`,'URSSAF',0,cs);
+    push('431010','URSSAF',`${m}${d}`,'URSSAF PRELEVEMENT',cs,0);
+    push('512010','Banque CIC',`${m}${d}`,'URSSAF PRELEVEMENT',0,cs);
+    // ── Impôts & taxes (635) — trimestriel
+    if(i%3===0){
+      push('635010','Impôts & taxes',`${m}10`,'CFE/TVS',Math.round(2400/4),0);
+      push('447010','État impôts',`${m}10`,'CFE/TVS',0,Math.round(2400/4));
+      push('447010','État impôts',`${m}15`,'REGLT CFE',Math.round(2400/4),0);
+      push('512010','Banque CIC',`${m}15`,'REGLT CFE',0,Math.round(2400/4));
+    }
+    // ── Dotations amortissements (681) — OD mensuelle
+    push('681110','Dot. amort.',`${m}${d}`,'AMORT MENSUEL',2000,0);
+    push('281820','Amort. matériel',`${m}${d}`,'AMORT MENSUEL',0,2000);
+    // ── Intérêts emprunt (661) — prélèvement automatique
+    const interets=Math.round(620+rng(seed*700+i)*80);
+    push('661100','Intérêts emprunt',`${m}03`,'ECHEANCE CREDIT',interets,0);
+    push('512010','Banque CIC',`${m}03`,'ECHEANCE CREDIT',0,interets);
+  });
+
+  // ── Bilan d'ouverture équilibré ──────────────────────────────────────────
+  // ACTIF OUVERTURE
+  push('215010','Matériel informatique','0101','BILAN OUVERTURE',45000,0);
+  push('218010','Autres immo. corporelles','0101','BILAN OUVERTURE',28000,0);
+  // Amortissements cumulés au 01/01 (comptes 28x = créditeurs)
+  push('281820','Amort. cumulé matériel','0101','BILAN OUVERTURE',0,18000);
+  // Créances clients ouverture
+  push('411010','Clients','0101','BILAN OUVERTURE',35000,0);
+  // Banque solde ouverture (calculé pour équilibrer)
+  // Actif : 45000+28000-18000+35000 + banque = Passif : 50000+120000+78000
+  // banque = 248000 - 90000 = 158000
+  push('512010','Banque CIC','0101','BILAN OUVERTURE',158000,0);
+  // PASSIF OUVERTURE
+  push('101000','Capital social','0101','BILAN OUVERTURE',0,50000);
+  push('110000','Réserves légales','0101','BILAN OUVERTURE',0,20000);
+  push('112000','Réserves libres','0101','BILAN OUVERTURE',0,100000);
+  push('164010','Emprunt bancaire LT','0101','BILAN OUVERTURE',0,78000);
+  // IS (acomptes en juin + solde en dec)
+  const rnetEst=Math.round((caBase*0.90-caBase*0.04-36000-caBase*0.08-caBase*0.06-caBase*0.34*1.45-2400-24000-7500)*0.25);
+  push('695100','IS - acomptes','0630','ACOMPTE IS',Math.round(rnetEst*0.5),0);push('512010','Banque CIC','0630','ACOMPTE IS',0,Math.round(rnetEst*0.5));
+  push('695100','IS - solde','1231','SOLDE IS',Math.round(rnetEst*0.5),0);push('512010','Banque CIC','1231','SOLDE IS',0,Math.round(rnetEst*0.5));
+
+  return 'CompteNum\tCompteLib\tEcritureDate\tEcritureLib\tDebit\tCredit\n'+lines.join('\n');
+}
+
+const DEMO_N  = generateDemoFEC(2024, 482000, 42);
+const DEMO_N1 = generateDemoFEC(2023, 415000, 17);
+
+// ═══════════════════════════════ FEC PARSER ════════════════════════════════
+function parseFEC(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2)return[];
+  const sample=lines[0];
+  const sep=sample.split('|').length>5?'|':sample.split('\t').length>5?'\t':';';
+  const hdr=sample.split(sep).map(h=>h.trim().replace(/^"|"$/g,'').toLowerCase());
+  const idx=names=>{for(const n of names){const i=hdr.findIndex(h=>h===n||h.startsWith(n));if(i>=0)return i;}return-1;};
+  const iC=idx(['comptenum','compte_num','numcompte']);
+  const iL=idx(['comptelib','compte_lib','libcompte']);
+  const iD=idx(['debit','montantdebit']);
+  const iCr=idx(['credit','montantcredit']);
+  const iDt=idx(['ecrituredate','date_ecriture','datepiece','piecedate']);
+  const iEl=idx(['ecriturelib','libelle','ecriture_lib','piecelib']);
+  if(iC<0||iD<0||iCr<0)return[];
+  const tf=s=>parseFloat((s||'0').replace(',','.').replace(/\s/g,''))||0;
+  return lines.slice(1).map(line=>{
+    const v=line.split(sep).map(x=>x.trim().replace(/^"|"$/g,''));
+    return{compte:(v[iC]||'').replace(/\s/g,''),lib:v[iL]||'',debit:tf(v[iD]),credit:tf(v[iCr]),date:v[iDt]||'',ecLib:v[iEl]||''};
+  }).filter(r=>r.compte&&/^\d/.test(r.compte));
+}
+
+// ═══════════════════════════════ SIG CONFIG ════════════════════════════════
+// Each row: {id, label, prefixes, sign (debit=charge, credit=produit), bold, accent, sep, indent, big}
+const SIG_ROWS=[
+  {id:'ca',      label:"Chiffre d'affaires",         prefixes:['70'],       sign:'credit', bold:true,  sep:true},
+  {id:'prodstk', label:"+ Prod. stockée / immob.",   prefixes:['71','72'],  sign:'credit', indent:true},
+  {id:'subv',    label:"+ Subventions d'exploit.",   prefixes:['74'],       sign:'credit', indent:true},
+  {id:'achats',  label:"— Achats consommés nets",    prefixes:['60','6037','6031','6032'], sign:'debit', indent:true},
+  {id:'mb',      label:"Marge brute",                prefixes:[],           computed:true, bold:true, accent:true},
+  {id:'sext',    label:"— Services extérieurs",      prefixes:['61','62'],  sign:'debit',  indent:true},
+  {id:'va',      label:"Valeur Ajoutée",             prefixes:[],           computed:true, bold:true, sep:true},
+  {id:'perso',   label:"— Charges de personnel",     prefixes:['64'],       sign:'debit',  indent:true},
+  {id:'taxes',   label:"— Impôts & taxes d'exploit.",prefixes:['63'],       sign:'debit',  indent:true},
+  {id:'ebe',     label:"EBE",                        prefixes:[],           computed:true, bold:true, accent:true, sep:true},
+  {id:'dot',     label:"— Dotations amortissements", prefixes:['681','682'],sign:'debit',  indent:true},
+  {id:'repr',    label:"+ Reprises",                 prefixes:['781','782'],sign:'credit', indent:true},
+  {id:'autprod', label:"+ Autres produits gestion",  prefixes:['75'],       sign:'credit', indent:true},
+  {id:'autch',   label:"— Autres charges gestion",   prefixes:['65'],       sign:'debit',  indent:true},
+  {id:'rex',     label:"Résultat d'Exploitation",    prefixes:[],           computed:true, bold:true, accent:true, sep:true},
+  {id:'pfinc',   label:"+ Produits financiers",      prefixes:['76'],       sign:'credit', indent:true},
+  {id:'cfinc',   label:"— Charges financières",      prefixes:['66'],       sign:'debit',  indent:true},
+  {id:'rfin',    label:"Résultat financier",         prefixes:[],           computed:true, bold:false, sep:false},
+  {id:'rct',     label:"Résultat courant avant IS",  prefixes:[],           computed:true, bold:true},
+  {id:'pexc',    label:"+ Produits exceptionnels",   prefixes:['77'],       sign:'credit', indent:true},
+  {id:'cexc',    label:"— Charges exceptionnelles",  prefixes:['67'],       sign:'debit',  indent:true},
+  {id:'rexc',    label:"Résultat exceptionnel",      prefixes:[],           computed:true},
+  {id:'is',      label:"— IS & participation",       prefixes:['695','698','691'],sign:'debit',indent:true},
+  {id:'rnet',    label:"RÉSULTAT NET",               prefixes:[],           computed:true, bold:true, accent:true, big:true, sep:true},
+];
+
+// ═══════════════════════════════ SIG COMPUTE ══════════════════════════════
+// Flat SIG computation — NO recursion, NO monthly breakdown (safe to call on sub-sets)
+function computeBaseSIG(entries){
+  const NET=(pxs,mode)=>{
+    let d=0,c=0;
+    for(const e of entries){
+      for(const px of pxs){
+        if(e.compte.startsWith(px)){d+=e.debit;c+=e.credit;break;}
+      }
+    }
+    return mode==='credit'?c-d:d-c;
+  };
+  const v={};
+  for(const row of SIG_ROWS){
+    if(!row.computed&&row.prefixes&&row.prefixes.length>0)
+      v[row.id]=NET(row.prefixes,row.sign);
+  }
+  v.mb   = v.ca + (v.prodstk||0) - v.achats;
+  v.va   = v.mb - v.sext;
+  v.ebe  = v.va - v.perso - v.taxes + (v.subv||0);
+  v.rex  = v.ebe - v.dot + (v.repr||0) + (v.autprod||0) - (v.autch||0);
+  v.rfin = (v.pfinc||0) - (v.cfinc||0);
+  v.rct  = v.rex + v.rfin;
+  v.rexc = (v.pexc||0) - (v.cexc||0);
+  v.rnet = v.rct + v.rexc - (v.is||0);
+  return v;
+}
+
+// Full SIG — calls computeBaseSIG per month (never itself)
+function computeSIG(entries){
+  const v = computeBaseSIG(entries);
+
+  // CA mensuel simple (pour graphique rapide)
+  const mensuel={};
+  for(const e of entries){
+    if(e.compte.startsWith('70')&&e.date&&e.date.length>=6){
+      const mk=e.date.substring(4,6);
+      if(mk>='01'&&mk<='12')mensuel[mk]=(mensuel[mk]||0)+(e.credit-e.debit);
+    }
+  }
+
+  // Groupement par mois puis SIG plat sur chaque mois (pas de récursion)
+  const byMonth={};
+  for(const e of entries){
+    if(e.date&&e.date.length>=6){
+      const mk=e.date.substring(4,6);
+      if(mk>='01'&&mk<='12'){
+        if(!byMonth[mk])byMonth[mk]=[];
+        byMonth[mk].push(e);
+      }
+    }
+  }
+  const monthSIG={};
+  for(const mk of Object.keys(byMonth)){
+    monthSIG[mk]=computeBaseSIG(byMonth[mk]); // ← flat, pas de récursion
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BILAN — CLASSIFICATION EXHAUSTIVE PCG (zéro compte non reconnu)
+  // Chaque compte cl.1-5 passe dans _pcgClass → ligne précise.
+  // Amortissements & dépréciations : même ligne que l'actif réduit, n<0.
+  // Identité Actif = Passif garantie si ΣD = ΣC dans le FEC.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // 1. Solde net par compte (D - C)
+  const _acctNet = {};
+  for(const e of entries)
+    _acctNet[e.compte] = (_acctNet[e.compte]||0) + e.debit - e.credit;
+
+  // 2. Table PCG complète — retourne [side:'A'|'P', ligne:string]
+  //    n = solde net D-C du compte ; positif = solde débiteur, négatif = créditeur
+  const _pcgClass = (c, n) => {
+    // ── CLASSE 1 ──────────────────────────────────────────────────────────
+    if(/^10[1-5]/.test(c)||c.startsWith('10'))  return ['P','capital'];
+    if(c.startsWith('106')||c.startsWith('107')||c.startsWith('1068')) return ['P','primesRes'];
+    if(c.startsWith('108')) return ['P','capital'];
+    if(c.startsWith('109')) return ['A','autresActif']; // capital non appelé
+    if(c.startsWith('11'))  return ['P','reserves'];
+    if(c.startsWith('12'))  return ['P','report'];  // report à nouveau (n>0 = perte reportée, valeur négative au passif)
+    if(c.startsWith('13'))  return ['P','subvInv'];
+    if(c.startsWith('14'))  return ['P','provRegl'];
+    if(c.startsWith('15'))  return ['P','provisions'];
+    if(c.startsWith('16')||c.startsWith('17')||c.startsWith('18'))
+      return n<=0 ? ['P','detteFin'] : ['A','autresActif'];
+    if(c.startsWith('19'))  return ['A','immoFin']; // dépréc. immo fin. (réducteur, n<0)
+
+    // ── CLASSE 2 ──────────────────────────────────────────────────────────
+    if(c.startsWith('20'))  return ['A','immoIncorp'];
+    if(c.startsWith('21')||c.startsWith('22')||c.startsWith('23')||
+       c.startsWith('24')||c.startsWith('25')) return ['A','immoCorp'];
+    if(c.startsWith('26')||c.startsWith('27')) return ['A','immoFin'];
+    // Amortissements incorporels (280x, 2808, 2809, 2801-2805)
+    if(c.startsWith('280')) return ['A','immoIncorp'];
+    // Amortissements corporels (281-285, 2818, 2819, etc.)
+    if(c.startsWith('281')||c.startsWith('282')||c.startsWith('283')||
+       c.startsWith('284')||c.startsWith('285')) return ['A','immoCorp'];
+    // Amortissements immo. financières (286-288)
+    if(c.startsWith('286')||c.startsWith('287')||c.startsWith('288')) return ['A','immoFin'];
+    if(c.startsWith('28')) return ['A','immoCorp']; // autres 28x
+    // Dépréciations incorporelles (290x)
+    if(c.startsWith('290')) return ['A','immoIncorp'];
+    // Dépréciations corporelles (291-295)
+    if(c.startsWith('291')||c.startsWith('292')||c.startsWith('293')||
+       c.startsWith('294')||c.startsWith('295')) return ['A','immoCorp'];
+    // Dépréciations immo. financières (296-299)
+    if(c.startsWith('296')||c.startsWith('297')||c.startsWith('298')||
+       c.startsWith('299')) return ['A','immoFin'];
+    if(c.startsWith('29')) return ['A','immoIncorp'];
+    if(c.startsWith('2'))  return ['A','immoFin']; // 2x non classés
+
+    // ── CLASSE 3 ──────────────────────────────────────────────────────────
+    if(c.startsWith('39')) return ['A','stocks']; // dépréciations stocks (n<0)
+    if(c[0]==='3')         return ['A','stocks'];
+
+    // ── CLASSE 4 ──────────────────────────────────────────────────────────
+    if(c.startsWith('409')) return ['A','creancesExp']; // fournisseurs débiteurs (acomptes)
+    if(c.startsWith('40'))  return n>=0 ? ['A','creancesExp']  : ['P','detteFrs'];
+    if(c.startsWith('419')) return ['P','clientsCred']; // clients créditeurs (avances reçues)
+    if(c.startsWith('41'))  return n>=0 ? ['A','clients']       : ['P','clientsCred'];
+    if(c.startsWith('42'))  return n>=0 ? ['A','creancesExp']   : ['P','detteSoc'];
+    if(c.startsWith('43'))  return n>=0 ? ['A','creancesExp']   : ['P','detteSoc'];
+    if(c.startsWith('44'))  return n>=0 ? ['A','creanceFisc']   : ['P','detteFisc'];
+    if(c.startsWith('45'))  return n>=0 ? ['A','autresCre']     : ['P','autresDettes'];
+    if(c.startsWith('46'))  return n>=0 ? ['A','autresCre']     : ['P','autresDettes'];
+    if(c.startsWith('47'))  return n>=0 ? ['A','regulA']        : ['P','regulP'];
+    if(c.startsWith('48'))  return n>=0 ? ['A','regulA']        : ['P','regulP'];
+    if(c.startsWith('49'))  return ['A','clients']; // dépréciations créances (n<0)
+    if(c.startsWith('4'))   return n>=0 ? ['A','autresCre']     : ['P','autresDettes'];
+
+    // ── CLASSE 5 ──────────────────────────────────────────────────────────
+    if(c.startsWith('59')) return ['A','treso']; // dépréciations VMP (n<0)
+    if(c[0]==='5') return n>=0 ? ['A','treso'] : ['P','decouvert'];
+
+    // ── FALLBACK (plan comptable adapté, comptes spéciaux) ────────────────
+    return n>=0 ? ['A','autresActif'] : ['P','autresDettes'];
+  };
+
+  // 3. Boucle unique exhaustive — chaque compte cl.1-5 contribue exactement une fois
+  const _BL = {}; // 'A_clients' → somme des nets signés
+  for(const [c, n] of Object.entries(_acctNet)){
+    if(c[0]<'1'||c[0]>'5') continue;
+    const [side, ligne] = _pcgClass(c, n);
+    _BL[side+'_'+ligne] = (_BL[side+'_'+ligne]||0) + n;
+  }
+
+  // 4. Résultat P&L = ∑(C-D) sur cl.6-7
+  const plNet = Object.entries(_acctNet)
+    .filter(([c])=>c[0]==='6'||c[0]==='7')
+    .reduce((a,[,n])=>a-n, 0);
+
+  // 5. Lecture des lignes
+  //    Actif  : _BL['A_x'] est signé (négatif si amort > brut, rare)
+  //    Passif : _BL['P_x'] est négatif (créditeurs) → on nège pour affichage
+  const _A = l => _BL['A_'+l]||0;
+  const _P = l => -(_BL['P_'+l]||0);
+
+  // 6. Totaux et postes bilan
+  const biImmoIncorp  = _A('immoIncorp');
+  const biImmoCorp    = _A('immoCorp');
+  const biImmoFin     = _A('immoFin');
+  const biStocks      = _A('stocks');
+  const biClients     = _A('clients');
+  const biCreancesExp = _A('creancesExp');
+  const biCreanceFisc = _A('creanceFisc');
+  const biAutresCre   = _A('autresCre');
+  const biRegulA      = _A('regulA');
+  const biTreso       = _A('treso');
+  const biAutresActif = _A('autresActif');
+
+  const totalActifImmo = biImmoIncorp + biImmoCorp + biImmoFin;
+  const totalActifCirc = biStocks + biClients + biCreancesExp + biCreanceFisc
+                       + biAutresCre + biRegulA + biTreso + biAutresActif;
+  const totalActif     = totalActifImmo + totalActifCirc;
+
+  const biCapital     = _P('capital');
+  const biPrimesRes   = _P('primesRes');
+  const biReserves    = _P('reserves');
+  const biReport      = _P('report');
+  const biSubvInv     = _P('subvInv');
+  const biResultat    = plNet;
+  const biProvRegl    = _P('provRegl');
+  const biProvisions  = _P('provisions');
+  const biDetteFin    = _P('detteFin');
+  const biDetteFrs    = _P('detteFrs');
+  const biClientsCred = _P('clientsCred');
+  const biDetteSoc    = _P('detteSoc');
+  const biDetteFisc   = _P('detteFisc');
+  const biAutresDettes= _P('autresDettes');
+  const biRegulP      = _P('regulP');
+  const biDecouvert   = _P('decouvert');
+
+  const cpTotal   = biCapital+biPrimesRes+biReserves+biReport+biSubvInv+biResultat;
+  const provTotal = biProvRegl+biProvisions;
+  const detTotal  = biDetteFin+biDetteFrs+biClientsCred+biDetteSoc+biDetteFisc
+                  + biAutresDettes+biRegulP+biDecouvert;
+  const totalPassif = cpTotal+provTotal+detTotal;
+  const bilanDiff   = Math.round(totalActif-totalPassif); // 0 si FEC ΣD=ΣC
+
+  const bilan = {
+    immoIncorp:biImmoIncorp, immoCorp:biImmoCorp, immoFin:biImmoFin,
+    stocks:biStocks, clients:biClients,
+    creancesExp:biCreancesExp, creanceFisc:biCreanceFisc,
+    autresCre:biAutresCre, regulA:biRegulA,
+    treso:biTreso, autresActif:biAutresActif,
+    totalActifImmo, totalActifCirc, totalActif,
+    capital:biCapital, primesRes:biPrimesRes, reserves:biReserves,
+    report:biReport, resultat:biResultat, subvInv:biSubvInv,
+    provRegl:biProvRegl, provisions:biProvisions,
+    detteFin:biDetteFin, detteFrs:biDetteFrs, clientsCred:biClientsCred,
+    detteSoc:biDetteSoc, detteFisc:biDetteFisc,
+    autresDettes:biAutresDettes, regulP:biRegulP, decouvert:biDecouvert,
+    cpTotal, provTotal, detTotal, totalPassif, diff:bilanDiff,
+  };
+
+  const treso=biTreso;
+  const actifImmo=totalActifImmo, stocks=biStocks, creances=biClients,
+        autCre=biCreancesExp+biCreanceFisc+biAutresCre,
+        cp=cpTotal, dFin=biDetteFin, frs=biDetteFrs, dSoc=biDetteSoc;
+
+  const chargesStructure=[
+    {name:'Achats',value:Math.abs(v.achats||0)},
+    {name:'Services ext.',value:Math.abs(v.sext||0)},
+    {name:'Personnel',value:Math.abs(v.perso||0)},
+    {name:'Impôts & taxes',value:Math.abs(v.taxes||0)},
+    {name:'Financières',value:Math.abs(v.cfinc||0)},
+    {name:'Dotations',value:Math.abs(v.dot||0)},
+    {name:'Autres',value:Math.abs(v.autch||0)},
+  ].filter(c=>c.value>50);
+
+  let year=new Date().getFullYear();
+  for(const e of entries){if(e.date&&e.date.length>=4){const y=parseInt(e.date.substring(0,4));if(y>2000&&y<=2030){year=y;break;}}}
+
+  // ── Trésorerie journalière ────────────────────────────────────────────
+  const tresoJournaliere = computeTresoJournaliere(entries);
+
+  return{...v, mensuel, monthSIG, bilan, actifImmo, stocks, creances, autCre, treso, cp, dFin, frs, dSoc, chargesStructure, year, tresoJournaliere};
+}
+
+// Reconstruit le solde de trésorerie jour par jour depuis les mouvements 51x/52x/53x/54x
+function computeTresoJournaliere(entries){
+  if(!entries||!entries.length) return [];
+
+  // 1. Détecter l'année depuis les écritures
+  let year = new Date().getFullYear();
+  for(const e of entries){
+    if(e.date&&e.date.length>=4){
+      const y=parseInt(e.date.substring(0,4));
+      if(y>2000&&y<=2030){year=y;break;}
+    }
+  }
+
+  // 2. Collecter les mouvements sur comptes tréso (51x-54x)
+  const mouvByDate = {};
+  for(const e of entries){
+    if(!['51','52','53','54'].some(px=>e.compte.startsWith(px))) continue;
+    const dt=e.date;
+    if(!dt||dt.length<8) continue;
+    // Ne garder que les écritures de l'année
+    if(dt.substring(0,4)!==String(year)) continue;
+    const key=dt.substring(0,8);
+    if(!mouvByDate[key]) mouvByDate[key]={entrees:0,sorties:0,details:[]};
+    const net=e.debit-e.credit; // débit 51x = encaissement
+    if(net>0) mouvByDate[key].entrees+=net;
+    else mouvByDate[key].sorties+=Math.abs(net);
+    if(Math.abs(net)>10) mouvByDate[key].details.push({lib:e.ecLib||e.lib,montant:net});
+  }
+
+  // 3. Solde d'ouverture = solde net du 01/01 (écriture bilan ouverture 0101)
+  //    Si absent, on prend 0 (cas FEC sans bilan d'ouverture)
+  let soldeCourant = 0;
+  const ouv = `${year}0101`;
+  for(const e of entries){
+    if(e.date===ouv&&['51','52','53','54'].some(px=>e.compte.startsWith(px))){
+      soldeCourant += e.debit - e.credit;
+    }
+  }
+  // Retirer le 01/01 du tableau des mouvements (déjà intégré dans le solde d'ouverture)
+  delete mouvByDate[ouv];
+
+  // 4. Générer TOUS les jours de l'année pour une courbe continue
+  const serie = [];
+  const isLeap = (year%4===0&&year%100!==0)||(year%400===0);
+  const daysInMonth = [31,isLeap?29:28,31,30,31,30,31,31,30,31,30,31];
+  const mois_noms = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+
+  for(let m=1;m<=12;m++){
+    const dim=daysInMonth[m-1];
+    for(let d=1;d<=dim;d++){
+      const mm=String(m).padStart(2,'0');
+      const dd=String(d).padStart(2,'0');
+      const key=`${year}${mm}${dd}`;
+      const mv=mouvByDate[key];
+      if(mv){
+        soldeCourant+=mv.entrees-mv.sorties;
+      }
+      // Label affiché : 1er du mois seulement
+      const label=d===1?`${mois_noms[m-1]}`:'';
+      serie.push({
+        date:key,
+        dateF:`${dd}/${mm}/${year}`,
+        label,          // utilisé par l'XAxis
+        idx:serie.length,
+        solde:Math.round(soldeCourant),
+        entrees:mv?Math.round(mv.entrees):0,
+        sorties:mv?Math.round(mv.sorties):0,
+        net:mv?Math.round(mv.entrees-mv.sorties):0,
+        details:mv?mv.details.slice(0,5):[],
+      });
+    }
+  }
+  return serie;
+}
+
+// ═══════════════════════════════ HELPERS ═══════════════════════════════════
+const fmt=(n,compact)=>{
+  if(n===undefined||n===null||isNaN(n))return'—';
+  if(compact){
+    if(Math.abs(n)>=1e6)return(n/1e6).toFixed(2).replace('.',',')+' M€';
+    if(Math.abs(n)>=1000)return Math.round(n/1000).toLocaleString('fr-FR')+' k€';
+  }
+  return new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(n);
+};
+const pct=(n,ref)=>(!ref||ref===0||isNaN(n)||isNaN(ref))?'':(n/ref*100).toFixed(1)+'%';
+const evol=(n,n1)=>{if(n1===undefined||n1===null||n1===0||isNaN(n)||isNaN(n1))return null;return((n-n1)/Math.abs(n1)*100).toFixed(1);};
+const MOIS=['Janv','Févr','Mars','Avr.','Mai','Juin','Juil','Août','Sept','Oct.','Nov.','Déc.'];
+const MOIS_FULL=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+// ═══════════════════════════════ DRILL PANEL ══════════════════════════════
+function DrillPanel({entries,sigRow,dn,onClose}){
+  const[selCompte,setSelCompte]=useState(null);
+  const[search,setSearch]=useState('');
+
+  const byCompte=useMemo(()=>{
+    if(!sigRow||!entries)return[];
+    const map={};
+    for(const e of entries){
+      for(const px of (sigRow.prefixes||[])){
+        if(e.compte.startsWith(px)){
+          const k=e.compte;
+          if(!map[k])map[k]={compte:k,lib:e.lib,debit:0,credit:0,entries:[]};
+          map[k].debit+=e.debit;map[k].credit+=e.credit;map[k].entries.push(e);
+          break;
+        }
+      }
+    }
+    return Object.values(map).sort((a,b)=>Math.abs(b.credit-b.debit)-Math.abs(a.credit-a.debit));
+  },[entries,sigRow]);
+
+  const compteEntries=useMemo(()=>{
+    if(!selCompte)return[];
+    const found=byCompte.find(c=>c.compte===selCompte);
+    if(!found)return[];
+    return found.entries.filter(e=>search===''||e.ecLib.toLowerCase().includes(search.toLowerCase())||e.date.includes(search));
+  },[byCompte,selCompte,search]);
+
+  if(!sigRow)return null;
+  const net=(e)=>sigRow.sign==='debit'?e.debit-e.credit:e.credit-e.debit;
+
+  return(
+    <div style={{position:'fixed',top:0,right:0,bottom:0,width:'min(680px,95vw)',background:C.surf,borderLeft:`1px solid ${C.borderL}`,zIndex:200,display:'flex',flexDirection:'column',boxShadow:'-8px 0 40px rgba(0,0,0,.5)'}} className="sr">
+      {/* Header */}
+      <div style={{padding:'20px 24px 16px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:C.card}}>
+        <div>
+          <div style={{fontSize:13,color:C.sub,fontWeight:500,marginBottom:4}}>Détail → {sigRow.label}</div>
+          <div style={{fontSize:22,fontFamily:"'DM Serif Display'",color:sigRow.net>=0?C.goldL:C.red}}>{fmt(sigRow.net)}</div>
+        </div>
+        <button onClick={()=>{setSelCompte(null);onClose();}} style={{background:'none',border:'none',color:C.sub,fontSize:22,cursor:'pointer',padding:8,borderRadius:8,transition:'background .15s'}} onMouseEnter={e=>e.target.style.background=C.border} onMouseLeave={e=>e.target.style.background='none'}>✕</button>
+      </div>
+
+      {/* Compte list */}
+      <div style={{padding:'16px 24px',borderBottom:`1px solid ${C.border}`,flex:'0 0 auto',maxHeight:320,overflowY:'auto'}}>
+        <div style={{fontSize:11,color:C.sub,fontWeight:600,textTransform:'uppercase',letterSpacing:1,marginBottom:12}}>Comptes contribuant ({byCompte.length})</div>
+        {byCompte.map(c=>{
+          const n=sigRow.sign==='debit'?c.debit-c.credit:c.credit-c.debit;
+          const isSelected=selCompte===c.compte;
+          return(
+            <div key={c.compte} onClick={()=>setSelCompte(isSelected?null:c.compte)}
+              style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',marginBottom:4,borderRadius:10,cursor:'pointer',border:`1px solid ${isSelected?C.goldL:C.border}`,background:isSelected?`${C.gold}12`:C.bg,transition:'all .18s'}}>
+              <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                <span style={{fontFamily:"'DM Mono'",fontSize:12,color:C.blue,fontWeight:500}}>{c.compte}</span>
+                <span style={{fontSize:13,color:C.sub}}>{c.lib}</span>
+              </div>
+              <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                <span style={{fontSize:11,color:C.muted}}>{c.entries.length} écr.</span>
+                <span style={{fontFamily:"'DM Mono'",fontSize:13,fontWeight:600,color:n>=0?C.text:C.red}}>{fmt(n,true)}</span>
+                <span style={{fontSize:11,color:isSelected?C.goldL:C.muted}}>{isSelected?'▼':'▶'}</span>
+              </div>
+            </div>
+          );
+        })}
+        {byCompte.length===0&&<div style={{color:C.muted,fontSize:13,textAlign:'center',padding:20}}>Aucune écriture trouvée pour ces préfixes.</div>}
+      </div>
+
+      {/* Écritures */}
+      {selCompte&&(
+        <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}} className="sl">
+          <div style={{padding:'14px 24px 10px',borderBottom:`1px solid ${C.border}`,display:'flex',gap:10,alignItems:'center'}}>
+            <span style={{fontSize:12,color:C.goldL,fontWeight:600}}>Écritures — {selCompte}</span>
+            <span style={{fontSize:11,color:C.muted}}>{compteEntries.length} lignes</span>
+            <div style={{flex:1}}/>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filtrer…"
+              style={{background:C.card,border:`1px solid ${C.borderL}`,borderRadius:7,padding:'5px 12px',color:C.text,fontSize:12,width:160}}/>
+          </div>
+          <div style={{flex:1,overflowY:'auto',padding:'0 0 16px'}}>
+            <table>
+              <thead>
+                <tr style={{position:'sticky',top:0,background:C.surf}}>
+                  {['Date','Libellé','Débit','Crédit','Solde'].map(h=>(
+                    <th key={h} style={{padding:'9px 16px',textAlign:h==='Libellé'?'left':'right',fontSize:11,color:C.muted,fontWeight:600,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {compteEntries.map((e,i)=>{
+                  const dt=e.date;
+                  const dateF=dt.length>=8?`${dt.substring(6,8)}/${dt.substring(4,6)}/${dt.substring(0,4)}`:dt;
+                  return(
+                    <tr key={i} className="entry-row" style={{borderBottom:`1px solid ${C.border}`,transition:'background .12s'}}>
+                      <td style={{padding:'8px 16px',fontFamily:"'DM Mono'",fontSize:11,color:C.sub,whiteSpace:'nowrap'}}>{dateF}</td>
+                      <td style={{padding:'8px 16px',fontSize:12,color:C.text,maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.ecLib||e.lib}</td>
+                      <td style={{padding:'8px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:e.debit>0?C.orange:C.muted}}>{e.debit>0?fmt(e.debit):'—'}</td>
+                      <td style={{padding:'8px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:e.credit>0?C.green:C.muted}}>{e.credit>0?fmt(e.credit):'—'}</td>
+                      <td style={{padding:'8px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,fontWeight:600,color:C.text}}>{fmt(e.credit-e.debit,true)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {!selCompte&&byCompte.length>0&&(
+        <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:C.muted,fontSize:13}}>
+          ← Cliquer un compte pour voir ses écritures
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════ SIG TABLE ════════════════════════════════
+function SIGTable({dn,dn1,yearN,entries,onDrill}){
+  const TH={padding:'11px 16px',textAlign:'right',color:C.sub,fontWeight:600,fontSize:11,background:C.surf,borderBottom:`1px solid ${C.borderL}`,textTransform:'uppercase',letterSpacing:0.8};
+  return(
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,overflow:'hidden'}}>
+      <table>
+        <thead>
+          <tr>
+            <th style={{...TH,textAlign:'left',width:'42%'}}>Soldes intermédiaires de gestion</th>
+            <th style={TH}>{yearN}</th>
+            <th style={TH}>% CA</th>
+            {dn1&&<><th style={TH}>{yearN-1}</th><th style={TH}>% CA</th><th style={TH}>Évol.</th></>}
+            <th style={{...TH,width:36}}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {SIG_ROWS.map((row,i)=>{
+            const n=dn[row.id];
+            const n1=dn1?.[row.id];
+            const e=dn1?evol(n,n1):null;
+            const eUp=e!==null&&parseFloat(e)>=0;
+            const drillable=!row.computed&&row.prefixes&&row.prefixes.length>0;
+            return(
+              <tr key={row.id}
+                className={drillable?'row-drill':''}
+                onClick={drillable?()=>onDrill({...row,net:n}):undefined}
+                style={{borderTop:row.sep?`1px solid ${C.borderL}`:'none',background:row.accent?`${C.gold}07`:i%2===0?'transparent':'rgba(255,255,255,.008)',transition:'background .12s'}}>
+                <td style={{padding:`${row.big?13:9}px 16px`,color:row.bold?C.text:C.sub,fontWeight:row.bold?600:400,fontSize:row.big?14:13}}>
+                  {row.indent&&<span style={{color:C.muted,marginRight:8,fontSize:10}}>└─</span>}
+                  {row.label}
+                </td>
+                <td style={{padding:'9px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:row.bold?700:400,fontSize:row.big?15:13,color:n===undefined?C.muted:n<0?C.red:row.accent?C.goldL:C.text}}>
+                  {n!==undefined?fmt(n):'—'}
+                </td>
+                <td style={{padding:'9px 16px',textAlign:'right',fontSize:11,color:C.muted}}>{n!==undefined?pct(n,dn.ca):''}</td>
+                {dn1&&<>
+                  <td style={{padding:'9px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:n1!==undefined&&n1<0?C.red:'#A8BDD4'}}>{n1!==undefined?fmt(n1):'—'}</td>
+                  <td style={{padding:'9px 16px',textAlign:'right',fontSize:11,color:'#566B80'}}>{n1!==undefined?pct(n1,dn1.ca):''}</td>
+                  <td style={{padding:'9px 16px',textAlign:'right',fontSize:12}}>
+                    {e!==null&&<span style={{color:eUp?C.green:C.red,fontWeight:700}}>{eUp?'▲':'▼'} {Math.abs(e)}%</span>}
+                  </td>
+                </>}
+                <td style={{padding:'9px 8px',textAlign:'center',fontSize:11,color:drillable?C.blue:C.border}}>{drillable?'⤵':''}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div style={{padding:'10px 16px',background:C.surf,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>
+        💡 Cliquer sur une ligne <span style={{color:C.blue}}>⤵</span> pour afficher le détail des comptes et écritures
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════ MONTHLY ANALYSE ══════════════════════════
+function MensuelAnalyse({dn,dn1,yearN}){
+  const[selMois,setSelMois]=useState(null);
+  const[view,setView]=useState('chart');
+
+  const data=MOIS.map((m,i)=>{
+    const k=String(i+1).padStart(2,'0');
+    const ms=dn.monthSIG[k]||{};
+    const ms1=dn1?.monthSIG?.[k]||{};
+    const ca=Math.round(ms.ca||0);
+    const ca1=dn1?Math.round(ms1.ca||0):0;
+    const perso=Math.abs(Math.round(ms.perso||0));
+    const perso1=dn1?Math.abs(Math.round(ms1.perso||0)):0;
+    const mb=Math.round(ms.mb||0);
+    const mb1=dn1?Math.round(ms1.mb||0):0;
+    return{
+      name:m,k,
+      CA:ca, EBE:Math.round(ms.ebe||0), REX:Math.round(ms.rex||0), RN:Math.round(ms.rnet||0),
+      CA1:ca1, EBE1:dn1?Math.round(ms1.ebe||0):0,
+      // Nouveaux indicateurs
+      ratioCASal: perso>0?Math.round(ca/perso*100):0,
+      ratioCASal1: perso1>0&&ca1>0?Math.round(ca1/perso1*100):0,
+      tauxMarge: ca>0?Math.round(mb/ca*100):0,
+      tauxMarge1: ca1>0&&mb1!==0?Math.round(mb1/ca1*100):0,
+    };
+  });
+
+  // Cumulé — sans REX N-1
+  const cumul=[];
+  let cumCA=0,cumEBE=0,cumREX=0,cumCA1=0,cumEBE1=0;
+  data.forEach(d=>{
+    cumCA+=d.CA;cumEBE+=d.EBE;cumREX+=d.REX;cumCA1+=d.CA1;cumEBE1+=d.EBE1;
+    cumul.push({name:d.name,CA:cumCA,EBE:cumEBE,REX:cumREX,CA1:cumCA1,EBE1:cumEBE1});
+  });
+
+  const TV=['chart','cumul','table'];
+  const TL=['Mensuel','Cumulé','Tableau'];
+  const tt={contentStyle:{background:C.surf,border:`1px solid ${C.borderL}`,borderRadius:10,color:C.text,fontSize:12},cursor:{stroke:`${C.gold}30`,strokeWidth:1}};
+
+  const ChartCard=({title,sub,color,children})=>(
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+      <div style={{fontSize:13,fontWeight:700,color,marginBottom:4}}>{title}</div>
+      <div style={{fontSize:11,color:C.sub,marginBottom:18}}>{sub}</div>
+      {children}
+    </div>
+  );
+
+  return(
+    <div>
+      <div style={{display:'flex',gap:4,marginBottom:20,background:C.surf,padding:4,borderRadius:10,width:'fit-content',border:`1px solid ${C.border}`}}>
+        {TV.map((v,i)=>(
+          <button key={v} onClick={()=>setView(v)} style={{background:view===v?C.borderL:'transparent',border:'none',borderRadius:7,padding:'6px 16px',color:view===v?C.text:C.sub,fontSize:12,fontWeight:view===v?600:400,cursor:'pointer',transition:'all .18s'}}>{TL[i]}</button>
+        ))}
+      </div>
+
+      {view==='chart'&&(
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+
+          {/* CA mensuel */}
+          <ChartCard title="CA mensuel" sub={`${yearN}${dn1?` vs ${yearN-1}`:''}`} color={C.blueL}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data} barCategoryGap="28%" barGap={3}>
+                <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v}/>
+                <Tooltip {...tt} formatter={(v,nm)=>[fmt(v),nm==='CA'?yearN:yearN-1]}/>
+                <Bar dataKey="CA" fill={C.blue} radius={[4,4,0,0]} maxBarSize={36}/>
+                {dn1&&<Bar dataKey="CA1" fill={C.muted} radius={[4,4,0,0]} maxBarSize={36}/>}
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* EBE mensuel */}
+          <ChartCard title="EBE mensuel" sub="Excédent Brut d'Exploitation" color={C.goldL}>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={data}>
+                <defs>
+                  <linearGradient id="gEBE" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.gold} stopOpacity={0.3}/><stop offset="95%" stopColor={C.gold} stopOpacity={0.02}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v}/>
+                <Tooltip {...tt} formatter={(v,nm)=>[fmt(v),nm==='EBE'?'EBE '+yearN:'EBE '+(yearN-1)]}/>
+                <ReferenceLine y={0} stroke={C.muted} strokeDasharray="3 3"/>
+                <Area type="monotone" dataKey="EBE" stroke={C.gold} strokeWidth={2} fill="url(#gEBE)"/>
+                {dn1&&<Area type="monotone" dataKey="EBE1" stroke={C.muted} strokeWidth={1.5} strokeDasharray="4 2" fill="none"/>}
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* REX mensuel */}
+          <ChartCard title="Résultat d'exploitation mensuel" sub="REX par mois" color={C.green}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data} barCategoryGap="35%">
+                <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v}/>
+                <Tooltip {...tt} formatter={v=>[fmt(v),'REX']}/>
+                <ReferenceLine y={0} stroke={C.muted} strokeDasharray="3 3"/>
+                <Bar dataKey="REX" radius={[4,4,0,0]} maxBarSize={40}>
+                  {data.map((d,i)=><Cell key={i} fill={d.REX>=0?C.green:C.red}/>)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* % EBE/CA */}
+          <ChartCard title="% EBE/CA mensuel" sub="Taux de marge EBE" color={C.purple}>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={data.map(d=>({name:d.name,pct:d.CA>0?Math.round(d.EBE/d.CA*100):0,pct1:dn1&&d.CA1>0?Math.round(d.EBE1/d.CA1*100):0}))}>
+                <defs>
+                  <linearGradient id="gPCT" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={C.purple} stopOpacity={0.25}/><stop offset="95%" stopColor={C.purple} stopOpacity={0.02}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v+'%'}/>
+                <Tooltip {...tt} formatter={(v,nm)=>[v+'%',nm==='pct'?'EBE/CA '+yearN:'EBE/CA '+(yearN-1)]}/>
+                <ReferenceLine y={0} stroke={C.muted} strokeDasharray="3 3"/>
+                <Area type="monotone" dataKey="pct" stroke={C.purple} strokeWidth={2} fill="url(#gPCT)"/>
+                {dn1&&<Area type="monotone" dataKey="pct1" stroke={C.muted} strokeWidth={1.5} strokeDasharray="4 2" fill="none" dot={false}/>}
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* NOUVEAU : CA / Masse salariale */}
+          <ChartCard title="CA / Masse salariale" sub={`Ratio productivité — idéal > 3x · ${yearN}${dn1?` vs ${yearN-1}`:''}`} color={C.teal}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data} barCategoryGap="28%" barGap={3}>
+                <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v+'%'}/>
+                <Tooltip {...tt} formatter={(v,nm)=>[v+'%',nm==='ratioCASal'?'CA/Sal '+yearN:'CA/Sal '+(yearN-1)]}/>
+                <ReferenceLine y={300} stroke={C.teal} strokeDasharray="3 3" strokeOpacity={0.4}/>
+                <Bar dataKey="ratioCASal" name={`CA/Sal ${yearN}`} fill={C.teal} radius={[4,4,0,0]} maxBarSize={36}/>
+                {dn1&&<Bar dataKey="ratioCASal1" name={`CA/Sal ${yearN-1}`} fill={C.muted} radius={[4,4,0,0]} maxBarSize={36}/>}
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* NOUVEAU : Taux de marge brute mensuel */}
+          <ChartCard title="Taux de marge brute" sub={`MB/CA mensuel · ${yearN}${dn1?` vs ${yearN-1}`:''}`} color={C.orange}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data} barCategoryGap="28%" barGap={3}>
+                <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v+'%'}/>
+                <Tooltip {...tt} formatter={(v,nm)=>[v+'%',nm==='tauxMarge'?'Marge brute '+yearN:'Marge brute '+(yearN-1)]}/>
+                <ReferenceLine y={0} stroke={C.muted} strokeDasharray="3 3"/>
+                <Bar dataKey="tauxMarge" name={`Marge ${yearN}`} fill={C.orange} radius={[4,4,0,0]} maxBarSize={36}>
+                  {data.map((d,i)=><Cell key={i} fill={d.tauxMarge>=0?C.orange:C.red}/>)}
+                </Bar>
+                {dn1&&<Bar dataKey="tauxMarge1" name={`Marge ${yearN-1}`} fill={C.muted} radius={[4,4,0,0]} maxBarSize={36}/>}
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+        </div>
+      )}
+
+      {view==='cumul'&&(
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.goldL,marginBottom:4}}>Trajectoire cumulée {yearN}</div>
+          <div style={{fontSize:12,color:C.sub,marginBottom:24}}>CA et EBE — progression annuelle{dn1?` vs ${yearN-1}`:''}</div>
+          <ResponsiveContainer width="100%" height={340}>
+            <ComposedChart data={cumul}>
+              <defs>
+                <linearGradient id="gCA" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={C.blue} stopOpacity={0.15}/><stop offset="95%" stopColor={C.blue} stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="gEBEc" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={C.gold} stopOpacity={0.2}/><stop offset="95%" stopColor={C.gold} stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="2 4" stroke={C.border} vertical={false}/>
+              <XAxis dataKey="name" stroke={C.muted} tick={{fill:C.sub,fontSize:11}} axisLine={false} tickLine={false}/>
+              <YAxis stroke={C.muted} tick={{fill:C.sub,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v}/>
+              <Tooltip {...tt} formatter={(v,nm)=>[fmt(v),nm]}/>
+              <Legend wrapperStyle={{fontSize:12,color:C.sub,paddingTop:12}}/>
+              <Area type="monotone" dataKey="CA"  name={`CA ${yearN}`}  stroke={C.blue} strokeWidth={2} fill="url(#gCA)"/>
+              <Area type="monotone" dataKey="EBE" name={`EBE ${yearN}`} stroke={C.gold} strokeWidth={2} fill="url(#gEBEc)"/>
+              {dn1&&<Line type="monotone" dataKey="CA1"  name={`CA ${yearN-1}`}  stroke={C.blue} strokeWidth={1.5} strokeDasharray="4 3" dot={false} opacity={0.45}/>}
+              {dn1&&<Line type="monotone" dataKey="EBE1" name={`EBE ${yearN-1}`} stroke={C.gold} strokeWidth={1.5} strokeDasharray="4 3" dot={false} opacity={0.45}/>}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {view==='table'&&(
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,overflow:'hidden'}}>
+          <table>
+            <thead>
+              <tr>
+                {[
+                  {h:'Mois',       align:'left'},
+                  {h:'CA',         align:'right'},
+                  {h:'vs N-1',     align:'right'},
+                  {h:'Marge brute',align:'right'},
+                  {h:'% Marge',    align:'right'},
+                  {h:'EBE',        align:'right'},
+                  {h:'% EBE/CA',   align:'right'},
+                  {h:'REX',        align:'right'},
+                  {h:'% REX/CA',   align:'right'},
+                  {h:'Rés. Net',   align:'right'},
+                ].map(({h,align},i)=>(
+                  <th key={h} style={{padding:'11px 12px',textAlign:align,color:C.sub,fontSize:10,fontWeight:700,background:C.surf,borderBottom:`1px solid ${C.borderL}`,textTransform:'uppercase',letterSpacing:0.7,whiteSpace:'nowrap'}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((d,i)=>{
+                const k=d.k;
+                const ms=dn.monthSIG[k]||{};
+                const mb=ms.mb||0;
+                const pctMarge=d.CA>0?(mb/d.CA*100):0;
+                const margeColor=pctMarge>30?C.green:pctMarge>15?C.goldL:pctMarge>0?C.orange:C.red;
+                return(
+                  <tr key={k} onClick={()=>setSelMois(selMois===k?null:k)}
+                    style={{cursor:'pointer',background:selMois===k?`${C.gold}10`:i%2?'rgba(255,255,255,.007)':'transparent',borderBottom:`1px solid ${C.border}`,transition:'background .12s'}}>
+                    <td style={{padding:'10px 12px',fontWeight:600,color:selMois===k?C.goldL:C.text,fontSize:13}}>{MOIS_FULL[i]}</td>
+                    {/* CA */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:C.text}}>{fmt(d.CA)}</td>
+                    {/* % vs N-1 */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontSize:11,color:d.CA>d.CA1&&dn1?C.green:dn1?C.red:C.muted}}>{dn1&&d.CA1>0?((d.CA-d.CA1)/d.CA1*100).toFixed(1)+'%':'—'}</td>
+                    {/* Marge brute */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:mb>=0?C.text:C.red,fontWeight:600}}>{fmt(mb)}</td>
+                    {/* % Marge / CA — avec barre visuelle */}
+                    <td style={{padding:'6px 12px',textAlign:'right'}}>
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
+                        <span style={{fontSize:12,fontWeight:700,color:margeColor}}>{d.CA>0?pctMarge.toFixed(1)+'%':'—'}</span>
+                        <div style={{width:52,height:4,background:C.border,borderRadius:2}}>
+                          <div style={{height:'100%',width:`${Math.min(100,Math.max(0,pctMarge))}%`,background:margeColor,borderRadius:2,transition:'width .4s'}}/>
+                        </div>
+                      </div>
+                    </td>
+                    {/* EBE */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:d.EBE>=0?C.goldL:C.red}}>{fmt(d.EBE)}</td>
+                    {/* % EBE/CA */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontSize:11,color:C.muted}}>{d.CA>0?(d.EBE/d.CA*100).toFixed(1)+'%':'—'}</td>
+                    {/* REX */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:(ms.rex||0)>=0?C.green:C.red}}>{fmt(ms.rex)}</td>
+                    {/* % REX/CA */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontSize:11,color:C.muted}}>{d.CA>0?((ms.rex||0)/d.CA*100).toFixed(1)+'%':'—'}</td>
+                    {/* Résultat net */}
+                    <td style={{padding:'10px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,fontWeight:600,color:(ms.rnet||0)>=0?C.green:C.red}}>{fmt(ms.rnet)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr style={{background:C.surf,borderTop:`1px solid ${C.borderL}`}}>
+                <td style={{padding:'11px 12px',fontWeight:700,color:C.goldL,fontSize:13}}>TOTAL</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:700,color:C.text,fontSize:13}}>{fmt(dn.ca)}</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontSize:11,color:dn1&&dn.ca>dn1.ca?C.green:C.red}}>{dn1?evol(dn.ca,dn1.ca)+'%':'—'}</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:700,color:C.text,fontSize:13}}>{fmt(dn.mb)}</td>
+                <td style={{padding:'11px 12px',textAlign:'right'}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
+                    <span style={{fontSize:12,fontWeight:700,color:dn.ca>0&&(dn.mb/dn.ca)>0.3?C.green:(dn.mb/dn.ca)>0.15?C.goldL:C.orange}}>
+                      {dn.ca>0?((dn.mb||0)/dn.ca*100).toFixed(1)+'%':'—'}
+                    </span>
+                    <div style={{width:52,height:4,background:C.border,borderRadius:2}}>
+                      <div style={{height:'100%',width:`${Math.min(100,Math.max(0,dn.ca>0?(dn.mb||0)/dn.ca*100:0))}%`,background:C.goldL,borderRadius:2}}/>
+                    </div>
+                  </div>
+                </td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:700,color:C.goldL,fontSize:13}}>{fmt(dn.ebe)}</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontSize:11,color:C.muted}}>{pct(dn.ebe,dn.ca)}</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:700,color:dn.rex>=0?C.green:C.red,fontSize:13}}>{fmt(dn.rex)}</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontSize:11,color:C.muted}}>{pct(dn.rex,dn.ca)}</td>
+                <td style={{padding:'11px 12px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:700,color:dn.rnet>=0?C.green:C.red,fontSize:13}}>{fmt(dn.rnet)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════ DRILL TABLE CHARGES ═════════════════════
+function DrillTable({selCharge,monthlyData,totalN1,activeColor,dn1,onClose}){
+  const totalN=monthlyData.reduce((a,d)=>a+d.N,0)||1;
+  const footEv=dn1&&totalN1>0?((totalN-totalN1)/totalN1*100).toFixed(1):null;
+  const footGood=footEv!==null&&parseFloat(footEv)<=0;
+  return(
+    <div style={{background:C.card,border:`1px solid ${activeColor}40`,borderRadius:16,overflow:'hidden'}} className="sl">
+      <div style={{padding:'14px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center',background:`${activeColor}08`}}>
+        <div>
+          <span style={{fontSize:13,fontWeight:700,color:activeColor}}>Détail mensuel — {selCharge}</span>
+          <span style={{fontSize:11,color:C.sub,marginLeft:12}}>Mois par mois</span>
+        </div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:C.sub,fontSize:18,cursor:'pointer'}}>✕</button>
+      </div>
+      <table style={{width:'100%',borderCollapse:'collapse'}}>
+        <thead>
+          <tr>
+            {['Mois','N','% du total','vs N-1','Évol.'].map((h,i)=>(
+              <th key={h} style={{padding:'9px 16px',textAlign:i===0?'left':'right',color:C.sub,fontSize:10,fontWeight:700,background:C.surf,borderBottom:`1px solid ${C.borderL}`,textTransform:'uppercase',letterSpacing:0.7,whiteSpace:'nowrap'}}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {monthlyData.map((d,i)=>{
+            const ev=d.N1>0?((d.N-d.N1)/d.N1*100).toFixed(1):null;
+            const evGood=ev!==null&&parseFloat(ev)<=0;
+            return(
+              <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:i%2?'rgba(255,255,255,.005)':'transparent'}}>
+                <td style={{padding:'8px 16px',fontWeight:500,color:C.text,fontSize:13}}>{MOIS_FULL[i]}</td>
+                <td style={{padding:'8px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:d.N>0?activeColor:C.muted,fontWeight:600}}>{d.N>0?fmt(d.N):'—'}</td>
+                <td style={{padding:'8px 16px',textAlign:'right',fontSize:11,color:C.muted}}>{d.N>0?(d.N/totalN*100).toFixed(1)+'%':'—'}</td>
+                <td style={{padding:'8px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:C.sub}}>{d.N1>0?fmt(d.N1):'—'}</td>
+                <td style={{padding:'8px 16px',textAlign:'right',fontSize:11}}>
+                  {ev!==null&&<span style={{color:evGood?C.green:C.red,fontWeight:700}}>{evGood?'▼':'▲'} {Math.abs(ev)}%</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{background:C.surf,borderTop:`1px solid ${C.borderL}`}}>
+            <td style={{padding:'10px 16px',fontWeight:700,color:activeColor,fontSize:13}}>TOTAL</td>
+            <td style={{padding:'10px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontWeight:700,color:activeColor,fontSize:13}}>{fmt(totalN)}</td>
+            <td style={{padding:'10px 16px',textAlign:'right',fontSize:11,color:C.muted}}>100%</td>
+            <td style={{padding:'10px 16px',textAlign:'right',fontFamily:"'DM Mono'",fontSize:12,color:C.sub}}>{dn1?fmt(totalN1):'—'}</td>
+            <td style={{padding:'10px 16px',textAlign:'right',fontSize:11}}>
+              {footEv!==null&&<span style={{color:footGood?C.green:C.red,fontWeight:700}}>{footGood?'▼':'▲'} {Math.abs(footEv)}%</span>}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+// ═══════════════════════════════ CHARGES ══════════════════════════════════
+function ChargesPanel({dn,dn1,yearN}){
+  const[selCharge,setSelCharge]=useState(null);
+  const[chartMode,setChartMode]=useState('mensuel');
+  const[drillOpen,setDrillOpen]=useState(false);
+
+  const sorted=useMemo(()=>
+    [...dn.chargesStructure].sort((a,b)=>b.value-a.value)
+  ,[dn]);
+  const total=sorted.reduce((a,c)=>a+c.value,0);
+
+  const SIG_KEY={'Achats':'achats','Services ext.':'sext','Personnel':'perso','Impôts & taxes':'taxes','Financières':'cfinc','Dotations':'dot','Autres':'autch'};
+
+  const monthlyData=useMemo(()=>{
+    if(!selCharge)return[];
+    const key=SIG_KEY[selCharge];
+    return MOIS.map((m,i)=>{
+      const mk=String(i+1).padStart(2,'0');
+      const ms=dn.monthSIG[mk]||{};
+      const ms1=dn1?.monthSIG?.[mk]||{};
+      return{name:m,mk,N:Math.abs(Math.round(ms[key]||0)),N1:dn1?Math.abs(Math.round(ms1[key]||0)):0};
+    });
+  },[selCharge,dn,dn1]);
+
+  const cumulData=useMemo(()=>{
+    let sN=0,sN1=0;
+    return monthlyData.map(d=>({name:d.name,N:sN+=d.N,N1:sN1+=d.N1}));
+  },[monthlyData]);
+
+  const annuelData=useMemo(()=>{
+    if(!selCharge)return[];
+    const tN=monthlyData.reduce((a,d)=>a+d.N,0);
+    const tN1=monthlyData.reduce((a,d)=>a+d.N1,0);
+    return dn1
+      ? [{name:String(yearN-1),val:tN1,yr:yearN-1},{name:String(yearN),val:tN,yr:yearN}]
+      : [{name:String(yearN),val:tN,yr:yearN}];
+  },[monthlyData,selCharge,dn1,yearN]);
+
+  const totalN1=useMemo(()=>{
+    if(!selCharge||!dn1)return 0;
+    const key=SIG_KEY[selCharge];
+    return Math.abs(Object.values(dn1.monthSIG||{}).reduce((a,ms)=>a+Math.abs(ms[key]||0),0));
+  },[selCharge,dn1]);
+
+  const chartData=chartMode==='cumul'?cumulData:chartMode==='annuel'?annuelData:monthlyData;
+  const selIdx=sorted.findIndex(c=>c.name===selCharge);
+  const activeColor=selIdx>=0?PIE[selIdx%PIE.length]:C.gold;
+  const handleSelect=name=>{if(selCharge===name){setSelCharge(null);setDrillOpen(false);}else{setSelCharge(name);setDrillOpen(false);}};
+
+  const PieTooltip=({active,payload})=>{
+    if(!active||!payload?.[0])return null;
+    const{name,value}=payload[0].payload;
+    const idx=sorted.findIndex(c=>c.name===name);
+    const col=PIE[idx%PIE.length];
+    return(
+      <div style={{background:'#111827',border:`1px solid ${col}50`,borderRadius:10,padding:'12px 16px',minWidth:180,boxShadow:'0 8px 24px rgba(0,0,0,.7)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:8}}>
+          <span style={{width:10,height:10,borderRadius:'50%',background:col,display:'inline-block'}}/>
+          <span style={{fontSize:12,fontWeight:700,color:C.text}}>{name}</span>
+        </div>
+        <div style={{fontSize:18,fontWeight:800,fontFamily:"'DM Mono'",color:col,marginBottom:4}}>{fmt(value)}</div>
+        <div style={{fontSize:11,color:'#9CA3AF'}}>{(value/total*100).toFixed(1)}% du total charges</div>
+      </div>
+    );
+  };
+
+  const tt={contentStyle:{background:'#111827',border:'1px solid #374151',borderRadius:10,color:C.text,fontSize:12},cursor:{fill:'rgba(255,255,255,0.04)'}};
+  const MODES=[{k:'mensuel',l:'Mensuel'},{k:'cumul',l:'Cumulé'}];
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        {/* Donut */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.goldL,marginBottom:2}}>Répartition des charges</div>
+          <div style={{fontSize:11,color:C.sub,marginBottom:16}}>Survoler pour le montant · cliquer pour l'analyse</div>
+          <ResponsiveContainer width="100%" height={270}>
+            <PieChart>
+              <Pie data={sorted} cx="50%" cy="50%" innerRadius={70} outerRadius={115}
+                dataKey="value" nameKey="name" paddingAngle={2} onClick={d=>handleSelect(d.name)}>
+                {sorted.map((c,i)=>(
+                  <Cell key={i} fill={PIE[i%PIE.length]}
+                    opacity={selCharge&&selCharge!==c.name?0.3:1}
+                    stroke={selCharge===c.name?'#fff':'none'} strokeWidth={2} style={{cursor:'pointer'}}/>
+                ))}
+              </Pie>
+              <Tooltip content={<PieTooltip/>}/>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Barres horizontales */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.goldL,marginBottom:2}}>Détail par nature</div>
+          <div style={{fontSize:11,color:C.sub,marginBottom:20}}>
+            Cliquer → graphique&nbsp;
+            {selCharge&&<span style={{color:C.blue,cursor:'pointer',fontWeight:600}} onClick={()=>setDrillOpen(o=>!o)}>[{drillOpen?'▲ fermer tableau':'▼ tableau détail'}]</span>}
+          </div>
+          {sorted.map((c,i)=>{
+            const isActive=selCharge===c.name;
+            const col=PIE[i%PIE.length];
+            const n1v=dn1?Math.abs(Object.values(dn1.monthSIG||{}).reduce((a,ms)=>a+Math.abs(ms[SIG_KEY[c.name]]||0),0)):0;
+            const ep=n1v>0?((c.value-n1v)/n1v*100).toFixed(1):null;
+            return(
+              <div key={i} style={{marginBottom:10,cursor:'pointer',padding:'7px 10px',borderRadius:9,border:`1px solid ${isActive?col+'60':C.border}`,background:isActive?`${col}10`:'transparent',transition:'all .18s'}}
+                onClick={()=>handleSelect(c.name)}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4,alignItems:'center'}}>
+                  <span style={{fontSize:12,color:isActive?C.text:C.sub,fontWeight:isActive?600:400,display:'flex',alignItems:'center',gap:7}}>
+                    <span style={{width:9,height:9,borderRadius:'50%',background:col,display:'inline-block',flexShrink:0}}/>
+                    {c.name}
+                  </span>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    {ep!==null&&<span style={{fontSize:10,fontWeight:700,color:parseFloat(ep)>0?C.red:C.green}}>{parseFloat(ep)>0?'▲':'▼'}{Math.abs(ep)}%</span>}
+                    <span style={{fontSize:12,color:isActive?col:C.text,fontWeight:600,fontFamily:"'DM Mono'"}}>{fmt(c.value)}</span>
+                    <span style={{color:C.muted,fontWeight:400,fontSize:10}}>({(c.value/total*100).toFixed(1)}%)</span>
+                  </div>
+                </div>
+                <div style={{height:5,background:C.border,borderRadius:3}}>
+                  <div style={{height:'100%',width:`${c.value/total*100}%`,background:col,borderRadius:3,transition:'width .6s ease'}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Tableau drill */}
+      {selCharge&&drillOpen&&(
+        <DrillTable selCharge={selCharge} monthlyData={monthlyData} totalN1={totalN1}
+          activeColor={activeColor} dn1={dn1} onClose={()=>setDrillOpen(false)}/>
+      )}
+
+      {/* Graphique dynamique */}
+      <div style={{background:C.card,border:`1px solid ${selCharge?activeColor+'40':C.border}`,borderRadius:16,padding:24,transition:'border-color .2s'}}>
+        {!selCharge?(
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',minHeight:160,color:C.muted,flexDirection:'column',gap:10}}>
+            <span style={{fontSize:28,opacity:0.4}}>📊</span>
+            <span style={{fontSize:13}}>Cliquer sur une nature de charges pour afficher son analyse</span>
+          </div>
+        ):(
+          <>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:10}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:activeColor}}>{selCharge}</div>
+                <div style={{fontSize:11,color:C.sub,marginTop:2}}>
+                  <span style={{color:C.text,fontWeight:600}}>{fmt(monthlyData.reduce((a,d)=>a+d.N,0))}</span> en {yearN}
+                  {dn1&&<> · <span style={{color:C.sub}}>{fmt(totalN1)}</span> en {yearN-1}</>}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:3,background:C.surf,padding:3,borderRadius:9,border:`1px solid ${C.border}`}}>
+                {MODES.map(mo=>(
+                  <button key={mo.k} onClick={()=>setChartMode(mo.k)}
+                    style={{background:chartMode===mo.k?C.borderL:'transparent',border:'none',borderRadius:6,padding:'5px 14px',color:chartMode===mo.k?C.text:C.sub,fontSize:12,fontWeight:chartMode===mo.k?600:400,cursor:'pointer',transition:'all .15s'}}>
+                    {mo.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {chartMode==='annuel'?(
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={annuelData} barCategoryGap="50%" margin={{top:8,right:24,left:8,bottom:0}}>
+                  <CartesianGrid strokeDasharray="2 5" stroke={C.border} vertical={false}/>
+                  <XAxis dataKey="name" stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:14,fontWeight:700}} axisLine={false} tickLine={false}/>
+                  <YAxis stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v}/>
+                  <Tooltip {...tt} formatter={(v,nm,props)=>[fmt(v),props.payload?.name]}/>
+                  <Bar dataKey="val" radius={[6,6,0,0]} maxBarSize={80}>
+                    {annuelData.map((d,i)=>(<Cell key={i} fill={d.yr===yearN?activeColor:'#4B5563'}/>))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ):(
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={chartData} barCategoryGap="25%" barGap={3} margin={{top:8,right:8,left:4,bottom:0}}>
+                  <CartesianGrid strokeDasharray="2 5" stroke={C.border} vertical={false}/>
+                  <XAxis dataKey="name" stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:10}} axisLine={false} tickLine={false}/>
+                  <YAxis stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:9}} axisLine={false} tickLine={false} tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v}/>
+                  <Tooltip {...tt} formatter={(v,nm)=>[fmt(v),nm==='N'?String(yearN):String(yearN-1)]}/>
+                  <Bar dataKey="N" name={String(yearN)} fill={activeColor} radius={[4,4,0,0]} maxBarSize={32}/>
+                  {dn1&&<Bar dataKey="N1" name={String(yearN-1)} fill="#4B5563" radius={[4,4,0,0]} maxBarSize={32}/>}
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+
+            <div style={{marginTop:10,display:'flex',gap:20,fontSize:11,color:C.sub}}>
+              <span style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:20,height:3,background:activeColor,display:'inline-block',borderRadius:2}}/>{yearN}
+              </span>
+              {dn1&&<span style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:20,height:2,background:'#6B7280',display:'inline-block',borderRadius:2}}/>{yearN-1}
+              </span>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════ BILAN ════════════════════════════════════
+function BilanPanel({dn,dn1,yearN,entries}){
+  const[expandedA,setExpandedA]=useState({immo:true,circ:true});
+  const[expandedP,setExpandedP]=useState({cp:true,prov:false,det:true});
+  const[bilanDrill,setBilanDrill]=useState(null); // {label, prefixes, sign}
+  const b=dn.bilan||{};
+  const b1=dn1?.bilan||null;
+
+  const TIPS={
+    immo:"Les actifs immobilisés représentent les investissements durables de l'entreprise (> 1 an). Ils sont la colonne vertébrale productive.",
+    circ:"L'actif circulant tourne au rythme du cycle d'exploitation. Un stock ou une créance élevée peut signaler un besoin en fonds de roulement.",
+    cp:"Les capitaux propres mesurent la solidité financière intrinsèque. Un ratio CP/Total passif > 30 % est généralement sain.",
+    prov:"Les provisions traduisent la prudence : l'entreprise anticipe des risques ou charges futures même si leur montant est incertain.",
+    det:"Les dettes financent l'activité mais ont un coût. L'équilibre dettes/capitaux propres (levier financier) est un indicateur clé.",
+  };
+
+  const evPct=(n,n1)=>{if(!n1||n1===0)return null;return((n-n1)/Math.abs(n1)*100).toFixed(1);};
+
+  // Mapping label → prefixes for drill-down
+  const BILAN_PREFIXES={
+    'Immob. incorporelles & financières':['20','280','290'],
+    'Immob. corporelles brutes':['21','22','23','24','25','281','282','283','284','285','291','292','293','294','295'],
+    'Immob. financières (autres)':['26','27','286','287','288','296','297','298'],
+    'Stocks & en-cours':['3','39'],
+    'Créances clients nettes':['41','49'],
+    'Créances d\'exploitation':['40','42','43'],
+    'Créances fiscales & État':['44'],
+    'Autres créances & comptes courants':['45','46'],
+    'Régularisations actif':['47','48'],
+    'Disponibilités & VMP':['50','51','52','53','54','59'],
+    'Capital social':['101','102','103','104','105','108'],
+    'Primes & réserves légales':['106','107'],
+    'Autres réserves & report':['11','12'],
+    'Résultat de l\'exercice':['6','7'],
+    'Subventions d\'investissement':['13'],
+    'Provisions réglementées':['14'],
+    'Provisions risques/charges':['15'],
+    'Emprunts & dettes financières':['16','17','18'],
+    'Dettes fournisseurs':['40'],
+    'Avances & acomptes clients':['419'],
+    'Dettes sociales (personnel)':['42','43'],
+    'Dettes fiscales':['44','45'],
+    'Autres dettes':['46'],
+    'Régularisations passif':['47','48'],
+    'Découvert bancaire':['51','52','53'],
+  };
+
+  // BRow — cliquable si drill disponible, affiche N-1
+  const BRow=({label,val,prev,color,indent,bold,note,italic})=>{
+    const e=b1&&prev!==undefined?evPct(val,prev):null;
+    const eUp=e!==null&&parseFloat(e)>=0;
+    if(!val&&val!==0)return null;
+    const pxs=BILAN_PREFIXES[label];
+    const drillable=!!(pxs&&entries);
+    return(
+      <div onClick={drillable?()=>setBilanDrill({label,prefixes:pxs,net:val}):undefined}
+        style={{display:'flex',alignItems:'center',padding:`${bold?'10px':'7px'} 0`,borderBottom:`1px solid ${C.border}`,gap:6,cursor:drillable?'pointer':'default',transition:'background .12s'}}
+        className={drillable?'row-drill':''}>
+        {indent&&<span style={{width:14,color:C.muted,fontSize:10,flexShrink:0}}>└─</span>}
+        <div style={{flex:1,minWidth:0}}>
+          <span style={{fontSize:bold?13:12,color:bold?C.text:C.sub,fontWeight:bold?600:400,fontStyle:italic?'italic':'normal'}}>{label}</span>
+          {note&&<span style={{fontSize:10,color:C.muted,marginLeft:6,fontStyle:'italic'}}>{note}</span>}
+        </div>
+        {/* N-1 */}
+        {b1&&prev!==undefined&&<span style={{fontFamily:"'DM Mono'",fontSize:11,color:'#566B80',flexShrink:0,minWidth:70,textAlign:'right'}}>{fmt(prev,true)}</span>}
+        {/* Évol */}
+        {e!==null&&<span style={{fontSize:10,color:eUp?C.green:C.red,fontWeight:700,flexShrink:0,minWidth:40,textAlign:'right'}}>{eUp?'▲':'▼'}{Math.abs(e)}%</span>}
+        {/* N */}
+        <span style={{fontFamily:"'DM Mono'",fontSize:bold?13:12,fontWeight:bold?700:400,color:val<0?C.red:bold?color:C.text,flexShrink:0,minWidth:80,textAlign:'right'}}>{fmt(val)}</span>
+        {drillable&&<span style={{fontSize:10,color:C.blue,flexShrink:0}}>⤵</span>}
+      </div>
+    );
+  };
+
+  const SubTotal=({label,val,color})=>(
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'11px 14px',marginTop:6,borderRadius:10,background:`${color}10`,border:`1px solid ${color}30`}}>
+      <span style={{fontSize:12,fontWeight:700,color}}>{label}</span>
+      <span style={{fontFamily:"'DM Mono'",fontSize:14,fontWeight:700,color}}>{fmt(val)}</span>
+    </div>
+  );
+
+  const Section=({id,side,emoji,title,tip,color,expanded,onToggle,children,subtotal,prevTotal})=>{
+    const e=b1&&prevTotal!==undefined?evPct(subtotal,prevTotal):null;
+    const eUp=e!==null&&parseFloat(e)>=0;
+    return(
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,overflow:'hidden',marginBottom:12}}>
+        <div onClick={onToggle} style={{display:'flex',alignItems:'center',gap:12,padding:'14px 18px',cursor:'pointer',background:`${color}08`,borderBottom:expanded?`1px solid ${C.border}`:'none',transition:'background .15s'}}
+          onMouseEnter={ev=>ev.currentTarget.style.background=`${color}12`}
+          onMouseLeave={ev=>ev.currentTarget.style.background=`${color}08`}>
+          <span style={{fontSize:20}}>{emoji}</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:700,color,letterSpacing:'-0.2px'}}>{title}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2,fontStyle:'italic'}}>{tip}</div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            {e!==null&&<span style={{fontSize:11,color:eUp?C.green:C.red,fontWeight:700}}>{eUp?'▲':'▼'}{Math.abs(e)}%</span>}
+            <span style={{fontFamily:"'DM Mono'",fontSize:15,fontWeight:800,color}}>{fmt(subtotal,true)}</span>
+            <span style={{fontSize:12,color:C.muted,marginLeft:4}}>{expanded?'▲':'▼'}</span>
+          </div>
+        </div>
+        {expanded&&<div style={{padding:'8px 18px 14px'}}>
+          {b1&&<div style={{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:4,paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>
+            <span style={{fontSize:10,color:'#566B80',fontWeight:600,minWidth:70,textAlign:'right'}}>N-1</span>
+            <span style={{fontSize:10,color:C.muted,minWidth:40,textAlign:'right'}}>Évol.</span>
+            <span style={{fontSize:10,color:C.sub,fontWeight:600,minWidth:80,textAlign:'right'}}>N</span>
+            <span style={{width:16}}/>
+          </div>}
+          {children}
+        </div>}
+      </div>
+    );
+  };
+
+  const balanced = Math.abs(b.diff||0) < 1;
+
+  // Barre d'équilibre visuelle
+  const pctCP  = b.totalPassif>0 ? b.cpTotal/b.totalPassif*100 : 0;
+  const pctProv = b.totalPassif>0 ? b.provTotal/b.totalPassif*100 : 0;
+  const pctDet = b.totalPassif>0 ? b.detTotal/b.totalPassif*100 : 0;
+  const pctImmo = b.totalActif>0 ? b.totalActifImmo/b.totalActif*100 : 0;
+  const pctCirc = b.totalActif>0 ? b.totalActifCirc/b.totalActif*100 : 0;
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+
+      {/* ── Bandeau équilibre ───────────────────────────────────────── */}
+      <div style={{background:C.card,border:`1px solid ${balanced?C.green:C.orange}40`,borderRadius:14,padding:'16px 20px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:18}}>{balanced?'⚖️':'⚠️'}</span>
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:balanced?C.green:C.orange}}>
+                {balanced ? 'Bilan équilibré ✓' : 'Écart de bouclement'}
+              </div>
+              <div style={{fontSize:11,color:C.muted}}>
+                {balanced ? 'Actif = Passif — principe de la partie double respecté'
+                  : `Diff. : ${fmt(Math.abs(b.diff||0),true)} — comptes non couverts dans le FEC`}
+              </div>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:24,alignItems:'center'}}>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:11,color:C.sub,fontWeight:600,marginBottom:2}}>TOTAL ACTIF</div>
+              <div style={{fontSize:20,fontWeight:800,fontFamily:"'DM Mono'",color:C.blue}}>{fmt(b.totalActif,true)}</div>
+            </div>
+            <div style={{fontSize:20,color:C.muted}}>=</div>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:11,color:C.sub,fontWeight:600,marginBottom:2}}>TOTAL PASSIF</div>
+              <div style={{fontSize:20,fontWeight:800,fontFamily:"'DM Mono'",color:C.gold}}>{fmt(b.totalPassif,true)}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Barre de structure actif */}
+        <div style={{marginBottom:8}}>
+          <div style={{fontSize:10,color:C.sub,fontWeight:600,textTransform:'uppercase',letterSpacing:0.8,marginBottom:4}}>Structure Actif</div>
+          <div style={{height:22,borderRadius:8,overflow:'hidden',display:'flex',background:C.border}}>
+            <div style={{width:`${pctImmo}%`,background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff',fontWeight:700,transition:'width .7s'}}>{pctImmo>8?`${pctImmo.toFixed(0)}%`:''}</div>
+            <div style={{width:`${pctCirc}%`,background:`${C.blue}70`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff',fontWeight:700,transition:'width .7s'}}>{pctCirc>8?`${pctCirc.toFixed(0)}%`:''}</div>
+          </div>
+          <div style={{display:'flex',gap:16,marginTop:4}}>
+            <span style={{fontSize:10,color:C.blue}}>■ Immobilisé {pctImmo.toFixed(1)}%</span>
+            <span style={{fontSize:10,color:`${C.blue}`}}>■ Circulant {pctCirc.toFixed(1)}%</span>
+          </div>
+        </div>
+
+        {/* Barre de structure passif */}
+        <div>
+          <div style={{fontSize:10,color:C.sub,fontWeight:600,textTransform:'uppercase',letterSpacing:0.8,marginBottom:4}}>Structure Passif</div>
+          <div style={{height:22,borderRadius:8,overflow:'hidden',display:'flex',background:C.border}}>
+            <div style={{width:`${pctCP}%`,background:C.gold,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff',fontWeight:700,transition:'width .7s'}}>{pctCP>8?`${pctCP.toFixed(0)}%`:''}</div>
+            <div style={{width:`${pctProv}%`,background:C.orange,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff',fontWeight:700,transition:'width .7s'}}>{pctProv>4?`${pctProv.toFixed(0)}%`:''}</div>
+            <div style={{width:`${pctDet}%`,background:`${C.red}AA`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff',fontWeight:700,transition:'width .7s'}}>{pctDet>8?`${pctDet.toFixed(0)}%`:''}</div>
+          </div>
+          <div style={{display:'flex',gap:16,marginTop:4}}>
+            <span style={{fontSize:10,color:C.gold}}>■ Capitaux propres {pctCP.toFixed(1)}%</span>
+            {pctProv>0&&<span style={{fontSize:10,color:C.orange}}>■ Provisions {pctProv.toFixed(1)}%</span>}
+            <span style={{fontSize:10,color:C.red}}>■ Dettes {pctDet.toFixed(1)}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Colonnes Actif / Passif ─────────────────────────────────── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,alignItems:'start'}}>
+
+        {/* ═══ ACTIF ════════════════════════════════════════════════ */}
+        <div>
+          <div style={{fontSize:11,fontWeight:800,color:C.blue,textTransform:'uppercase',letterSpacing:1.5,marginBottom:14,display:'flex',alignItems:'center',gap:8}}>
+            <span style={{display:'inline-block',width:3,height:16,background:C.blue,borderRadius:2}}/>
+            ACTIF — ce que l'entreprise possède
+          </div>
+
+          {/* Actif immobilisé */}
+          <Section id="immo" side="A" emoji="🏗️" title="Actif immobilisé" tip={TIPS.immo}
+            color={C.blue} expanded={expandedA.immo} subtotal={b.totalActifImmo} prevTotal={b1?.totalActifImmo}
+            onToggle={()=>setExpandedA(p=>({...p,immo:!p.immo}))}>
+            <BRow label="Immob. incorporelles & financières" val={b.immoIncorp} prev={b1?.immoIncorp} color={C.blue} indent note="Fonds, logiciels, participations"/>
+            <BRow label="Immob. corporelles brutes"          val={b.immoCorp}  prev={b1?.immoCorp}  color={C.blue} indent note="Matériel, véhicules, agencements"/>
+            <BRow label="— Amortissements & dépréciations"   val={b.biAmort}   prev={b1?.biAmort}   color={C.muted} indent italic note="Valeur consommée"/>
+            <BRow label="Immob. financières (autres)"        val={b.immoFin}   prev={b1?.immoFin}   color={C.blue} indent note="Dépôts, cautionnements"/>
+            <SubTotal label="Sous-total Immobilisé" val={b.totalActifImmo} color={C.blue}/>
+          </Section>
+
+          {/* Actif circulant */}
+          <Section id="circ" side="A" emoji="🔄" title="Actif circulant" tip={TIPS.circ}
+            color={C.teal} expanded={expandedA.circ} subtotal={b.totalActifCirc} prevTotal={b1?.totalActifCirc}
+            onToggle={()=>setExpandedA(p=>({...p,circ:!p.circ}))}>
+            <BRow label="Stocks & en-cours"                 val={b.stocks}       prev={b1?.stocks}       color={C.teal}  indent note="Marchandises, produits finis, en-cours"/>
+            <BRow label="Créances clients nettes"           val={b.clients}      prev={b1?.clients}      color={C.teal}  indent note="Factures non encaissées (net dépréciations)"/>
+            <BRow label="Créances d'exploitation"           val={b.creancesExp}  prev={b1?.creancesExp}  color={C.teal}  indent note="Fournisseurs débiteurs, personnel, organismes"/>
+            <BRow label="Créances fiscales & État"          val={b.creanceFisc}  prev={b1?.creanceFisc}  color={C.teal}  indent note="TVA à récupérer, CIR, autres créances fiscales"/>
+            <BRow label="Autres créances & comptes courants" val={b.autresCre}   prev={b1?.autresCre}    color={C.teal}  indent note="Groupe, associés, débiteurs divers"/>
+            <BRow label="Régularisations actif"             val={b.regulA}       prev={b1?.regulA}       color={C.teal}  indent note="Charges constatées d'avance, comptes transitoires"/>
+            <BRow label="Disponibilités & VMP"              val={b.treso}        prev={b1?.treso}        color={C.green} indent bold note="Banque, caisse, valeurs mobilières de placement"/>
+            {(b.autresActif||0)!==0&&<BRow label="Autres actifs"  val={b.autresActif} prev={b1?.autresActif} color={C.teal} indent note="Capital souscrit non appelé, divers"/>}
+            <SubTotal label="Sous-total Circulant" val={b.totalActifCirc} color={C.teal}/>
+          </Section>
+
+          {/* Total actif */}
+          <div style={{background:`linear-gradient(135deg,${C.blue}18,${C.teal}10)`,border:`1px solid ${C.blue}40`,borderRadius:12,padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:14,fontWeight:800,color:C.blue}}>TOTAL ACTIF</span>
+            <span style={{fontFamily:"'DM Mono'",fontSize:20,fontWeight:800,color:C.blue}}>{fmt(b.totalActif)}</span>
+          </div>
+        </div>
+
+        {/* ═══ PASSIF ═══════════════════════════════════════════════ */}
+        <div>
+          <div style={{fontSize:11,fontWeight:800,color:C.gold,textTransform:'uppercase',letterSpacing:1.5,marginBottom:14,display:'flex',alignItems:'center',gap:8}}>
+            <span style={{display:'inline-block',width:3,height:16,background:C.gold,borderRadius:2}}/>
+            PASSIF — comment c'est financé
+          </div>
+
+          {/* Capitaux propres */}
+          <Section id="cp" side="P" emoji="🏦" title="Capitaux propres" tip={TIPS.cp}
+            color={C.gold} expanded={expandedP.cp} subtotal={b.cpTotal} prevTotal={b1?.cpTotal}
+            onToggle={()=>setExpandedP(p=>({...p,cp:!p.cp}))}>
+            <BRow label="Capital social"             val={b.capital}   prev={b1?.capital}   color={C.gold} indent bold note="Apports des associés"/>
+            <BRow label="Primes & réserves légales"  val={b.primesRes} prev={b1?.primesRes} color={C.gold} indent note="Réserves obligatoires"/>
+            <BRow label="Autres réserves & report"   val={(b.reserves||0)+(b.report||0)} prev={b1&&((b1.reserves||0)+(b1.report||0))} color={C.gold} indent note="Bénéfices antérieurs conservés"/>
+            <BRow label="Résultat de l'exercice"     val={b.resultat}  prev={b1?.resultat}  color={b.resultat>=0?C.green:C.red} indent bold note="Net de l'exercice courant"/>
+            <BRow label="Subventions d'investissement" val={b.subvInv} prev={b1?.subvInv}  color={C.gold} indent/>
+            <SubTotal label="Sous-total Capitaux propres" val={b.cpTotal} color={C.gold}/>
+            {b.totalPassif>0&&<div style={{fontSize:11,color:C.muted,fontStyle:'italic',marginTop:6,padding:'0 4px'}}>
+              Autonomie financière : {(b.cpTotal/b.totalPassif*100).toFixed(1)}% du passif total
+            </div>}
+          </Section>
+
+          {/* Provisions */}
+          {b.provTotal>0&&(
+            <Section id="prov" side="P" emoji="⚠️" title="Provisions pour risques & charges" tip={TIPS.prov}
+              color={C.orange} expanded={expandedP.prov} subtotal={b.provTotal} prevTotal={b1?.provTotal}
+              onToggle={()=>setExpandedP(p=>({...p,prov:!p.prov}))}>
+              <BRow label="Provisions réglementées"  val={b.provRegl}     prev={b1?.provRegl}     color={C.orange} indent note="Provisions réglementées (amort. dérogatoires…)"/>
+              <BRow label="Provisions risques/charges" val={b.provisions} prev={b1?.provisions}   color={C.orange} indent note="Risques et charges probables"/>
+              <SubTotal label="Sous-total Provisions" val={b.provTotal} color={C.orange}/>
+            </Section>
+          )}
+
+          {/* Dettes */}
+          <Section id="det" side="P" emoji="💳" title="Dettes" tip={TIPS.det}
+            color={C.red} expanded={expandedP.det} subtotal={b.detTotal} prevTotal={b1?.detTotal}
+            onToggle={()=>setExpandedP(p=>({...p,det:!p.det}))}>
+            <BRow label="Emprunts & dettes financières" val={b.detteFin}     prev={b1?.detteFin}     color={C.red} indent bold note="Banques, obligations, dettes assimilées (cl.16-18)"/>
+            <BRow label="Dettes fournisseurs"           val={b.detteFrs}     prev={b1?.detteFrs}     color={C.red} indent      note="Factures non réglées (cl.40)"/>
+            {(b.clientsCred||0)>0&&<BRow label="Avances & acomptes clients" val={b.clientsCred} prev={b1?.clientsCred} color={C.red} indent note="Clients créditeurs (avances reçues, cl.419)"/>}
+            <BRow label="Dettes sociales"               val={b.detteSoc}     prev={b1?.detteSoc}     color={C.red} indent      note="Personnel, URSSAF, caisses retraite (cl.42-43)"/>
+            <BRow label="Dettes fiscales"               val={b.detteFisc}    prev={b1?.detteFisc}    color={C.red} indent      note="IS, TVA collectée, taxes (cl.44)"/>
+            <BRow label="Autres dettes"                 val={b.autresDettes} prev={b1?.autresDettes} color={C.red} indent      note="Groupe, associés, créditeurs divers (cl.45-46)"/>
+            <BRow label="Régularisations passif"        val={b.regulP}       prev={b1?.regulP}       color={C.red} indent      note="Produits constatés d'avance, comptes transitoires (cl.47-48)"/>
+            {(b.decouvert||0)>0&&<BRow label="Découvert bancaire" val={b.decouvert} prev={b1?.decouvert} color={C.red} indent bold note="Solde créditeur compte banque (cl.5x)"/>}
+            <SubTotal label="Sous-total Dettes" val={b.detTotal} color={C.red}/>
+            {b.totalPassif>0&&<div style={{fontSize:11,color:C.muted,fontStyle:'italic',marginTop:6,padding:'0 4px'}}>
+              Levier dettes/CP : {b.cpTotal>0?((b.detTotal/b.cpTotal)).toFixed(2):'∞'}x
+            </div>}
+          </Section>
+
+          {/* Écart de bouclement si présent */}
+          {!balanced&&<div style={{background:`${C.orange}12`,border:`1px solid ${C.orange}30`,borderRadius:10,padding:'10px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <span style={{fontSize:12,color:C.orange,fontStyle:'italic'}}>Écart de bouclement (comptes non couverts)</span>
+            <span style={{fontFamily:"'DM Mono'",fontSize:13,color:C.orange,fontWeight:600}}>{fmt(b.diff||0)}</span>
+          </div>}
+
+          {/* Total passif */}
+          <div style={{background:`linear-gradient(135deg,${C.gold}18,${C.red}10)`,border:`1px solid ${C.gold}40`,borderRadius:12,padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:14,fontWeight:800,color:C.gold}}>TOTAL PASSIF</span>
+            <span style={{fontFamily:"'DM Mono'",fontSize:20,fontWeight:800,color:C.gold}}>{fmt(b.totalPassif)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Ratios clés ───────────────────────────────────────────── */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:'18px 22px'}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.sub,textTransform:'uppercase',letterSpacing:1,marginBottom:14}}>📐 Ratios bilanciels clés</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+          {(()=>{
+            // Dettes CT = tout sauf emprunts LT (detteFin)
+            const dettesCT = b.detteFrs + b.clientsCred + b.detteSoc + b.detteFisc
+                           + b.autresDettes + b.regulP + b.decouvert;
+            // Trésorerie nette = Disponibilités - Découvert
+            const tresoNette = (b.treso||0) - (b.decouvert||0);
+            const ratios = [
+              {
+                l:'Fonds de Roulement',
+                v:fmt((b.cpTotal+b.provTotal+b.detteFin)-b.totalActifImmo,true),
+                tip:'(CP + Provisions + Dettes LT) − Actif immobilisé · FR > 0 = excédent de ressources stables',
+                color:C.blue,
+                sign: (b.cpTotal+b.provTotal+b.detteFin)-b.totalActifImmo,
+              },
+              {
+                l:'Besoin en FR (BFR)',
+                v:fmt((b.stocks+b.clients+b.creancesExp+b.creanceFisc)-(b.detteFrs+b.detteSoc+b.detteFisc),true),
+                tip:'(Stocks + Créances exploit.) − Dettes exploitation · BFR < FR = tréso positive',
+                color:C.teal,
+                sign: (b.stocks+b.clients+b.creancesExp+b.creanceFisc)-(b.detteFrs+b.detteSoc+b.detteFisc),
+              },
+              {
+                l:'Autonomie financière',
+                v:b.totalPassif>0?(b.cpTotal/b.totalPassif*100).toFixed(1)+'%':'—',
+                tip:'CP / Total passif · Seuil sain > 30%',
+                color:C.gold,
+                sign: b.cpTotal,
+              },
+              {
+                l:'Liquidité générale',
+                v:dettesCT>0?(b.totalActifCirc/dettesCT).toFixed(2)+'x':'—',
+                tip:'Actif circulant / Dettes CT · Seuil sain > 1 — dettes CT = frs + social + fiscal + autres',
+                color:C.green,
+                sign: b.totalActifCirc - dettesCT,
+              },
+            ];
+            return ratios.map((r,i)=>(
+              <div key={i} style={{background:C.surf,border:`1px solid ${C.border}`,borderRadius:10,padding:'12px 14px',position:'relative',overflow:'hidden'}}>
+                <div style={{position:'absolute',inset:0,background:`radial-gradient(circle at 80% 20%,${r.color}12,transparent 70%)`,pointerEvents:'none'}}/>
+                <div style={{fontSize:10,color:C.sub,fontWeight:600,marginBottom:6}}>{r.l}</div>
+                <div style={{fontSize:18,fontWeight:800,fontFamily:"'DM Mono'",color:r.sign>=0?r.color:C.red}}>{r.v}</div>
+                <div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:'italic',lineHeight:1.4}}>{r.tip}</div>
+              </div>
+            ));
+          })()}
+        </div>
+      </div>
+
+      {/* ── Drill panel bilan ─────────────────────────────────────── */}
+      {bilanDrill&&(
+        <>
+          <div onClick={()=>setBilanDrill(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:199,backdropFilter:'blur(2px)'}}/>
+          <DrillPanel
+            entries={entries}
+            sigRow={{label:bilanDrill.label,prefixes:bilanDrill.prefixes,sign:'debit',net:bilanDrill.net}}
+            dn={dn}
+            onClose={()=>setBilanDrill(null)}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════ KPI CARD ════════════════════════════════
+function KPICard({label,value,prev,color,emoji,refCA,delay}){
+  const e=evol(value,prev);
+  const up=e!==null&&parseFloat(e)>=0;
+  return(
+    <div className="fu" style={{animationDelay:`${delay||0}ms`,background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:20,position:'relative',overflow:'hidden',transition:'border-color .2s,box-shadow .2s'}}>
+      <div style={{position:'absolute',inset:0,background:`radial-gradient(circle at 80% 20%, ${color}18, transparent 65%)`,pointerEvents:'none'}}/>
+      <div style={{fontSize:10,color:C.sub,fontWeight:700,textTransform:'uppercase',letterSpacing:1.2,marginBottom:10}}>{label}</div>
+      <div style={{fontSize:27,fontWeight:700,fontFamily:"'DM Mono'",color:C.text,marginBottom:10,letterSpacing:'-1px'}}>{fmt(value,true)}</div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+        {refCA&&<span style={{fontSize:11,color,fontWeight:700,background:`${color}18`,padding:'2px 9px',borderRadius:20}}>{pct(value,refCA)} CA</span>}
+        {e!==null&&<span style={{fontSize:11,color:up?C.green:C.red,fontWeight:700}}>{up?'▲':'▼'} {Math.abs(e)}%</span>}
+        {prev!==undefined&&prev!==null&&!isNaN(prev)&&<span style={{fontSize:11,color:C.muted}}>vs {fmt(prev,true)}</span>}
+      </div>
+      <div style={{position:'absolute',top:14,right:14,fontSize:24,opacity:0.18}}>{emoji}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════ UNIFIED DROP ZONE ═══════════════════════
+function UnifiedDropZone({onFiles,files,loading}){
+  const[drag,setDrag]=useState(false);
+  const inputRef=useRef();
+
+  const handleDrop=e=>{
+    e.preventDefault();setDrag(false);
+    const f=e.dataTransfer.files;
+    if(f.length)onFiles(f);
+  };
+
+  const hasN=!!files.n, hasN1=!!files.n1;
+  const bothLoaded=hasN&&hasN1;
+  const oneLoaded=hasN&&!hasN1;
+
+  return(
+    <label
+      onDragOver={e=>{e.preventDefault();setDrag(true);}}
+      onDragLeave={()=>setDrag(false)}
+      onDrop={handleDrop}
+      style={{
+        display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+        width:'min(560px,90vw)',minHeight:220,
+        border:`2px dashed ${drag?C.goldL:bothLoaded?C.green:hasN?C.blue:C.borderL}`,
+        borderRadius:24,cursor:'pointer',
+        background:drag?`${C.gold}08`:C.card,
+        textAlign:'center',padding:32,
+        transition:'all .22s',
+        position:'relative',
+      }}>
+      <input ref={inputRef} type="file" accept=".txt,.csv,.tsv,.fec" multiple style={{display:'none'}}
+        onChange={e=>{if(e.target.files.length)onFiles(e.target.files);e.target.value='';}}/>
+
+      {loading?(
+        <>
+          <div style={{fontSize:36,marginBottom:12}}>⏳</div>
+          <div style={{fontSize:15,color:C.sub,fontWeight:500}}>Analyse en cours…</div>
+        </>
+      ):!hasN?(
+        <>
+          <div style={{fontSize:48,marginBottom:14,filter:'drop-shadow(0 4px 12px rgba(200,145,58,.3))'}}>📂</div>
+          <div style={{fontSize:17,fontWeight:700,color:C.text,marginBottom:8}}>Déposez vos fichiers FEC ici</div>
+          <div style={{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:16}}>
+            Glisser-déposer <strong style={{color:C.text}}>1 ou 2 fichiers</strong> simultanément<br/>
+            ou cliquer pour sélectionner
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'center',marginBottom:8}}>
+            {['Exercice N','Exercice N-1 (optionnel)'].map((l,i)=>(
+              <span key={i} style={{fontSize:11,color:C.muted,background:C.surf,padding:'3px 12px',borderRadius:20,border:`1px solid ${C.border}`}}>{l}</span>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:C.muted}}>Formats : .txt · .csv · .fec · séparateur | ou tabulation</div>
+        </>
+      ):(
+        <>
+          <div style={{width:'100%',display:'flex',flexDirection:'column',gap:10}}>
+            {/* Fichier N */}
+            <div style={{display:'flex',alignItems:'center',gap:12,padding:'10px 16px',borderRadius:12,background:`${C.green}0E`,border:`1px solid ${C.green}30`}}>
+              <span style={{fontSize:20}}>✅</span>
+              <div style={{flex:1,textAlign:'left'}}>
+                <div style={{fontSize:11,color:C.green,fontWeight:700,textTransform:'uppercase',letterSpacing:0.8}}>Exercice N</div>
+                <div style={{fontSize:13,color:C.text,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{files.n}</div>
+              </div>
+            </div>
+            {/* Fichier N-1 */}
+            {hasN1?(
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'10px 16px',borderRadius:12,background:`${C.blue}0E`,border:`1px solid ${C.blue}30`}}>
+                <span style={{fontSize:20}}>✅</span>
+                <div style={{flex:1,textAlign:'left'}}>
+                  <div style={{fontSize:11,color:C.blueL,fontWeight:700,textTransform:'uppercase',letterSpacing:0.8}}>Exercice N-1</div>
+                  <div style={{fontSize:13,color:C.text,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{files.n1}</div>
+                </div>
+              </div>
+            ):(
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'10px 16px',borderRadius:12,background:C.surf,border:`1px dashed ${C.borderL}`}}>
+                <span style={{fontSize:18,opacity:0.4}}>📁</span>
+                <div style={{flex:1,textAlign:'left'}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:600}}>Exercice N-1</div>
+                  <div style={{fontSize:12,color:C.muted}}>Ajouter un 2ᵉ fichier pour la comparaison (optionnel)</div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{marginTop:14,fontSize:12,color:C.muted}}>
+            Cliquer ou glisser pour {bothLoaded?'remplacer':'ajouter le N-1'}
+          </div>
+        </>
+      )}
+    </label>
+  );
+}
+
+// ═══════════════════════════════ UPLOAD ══════════════════════════════════
+function UploadZone({label,onFile,fileName,optional,accent}){
+  const[drag,setDrag]=useState(false);
+  const col=accent||C.gold;
+  return(
+    <label style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12,width:300,height:200,border:`2px dashed ${drag?col:C.borderL}`,borderRadius:20,cursor:'pointer',background:drag?`${col}0A`:C.card,textAlign:'center',padding:24,transition:'all .22s'}}>
+      <input type="file" accept=".txt,.csv,.tsv,.fec" style={{display:'none'}} onChange={e=>{if(e.target.files[0])onFile(e.target.files[0]);}}/>
+      {fileName?(
+        <><div style={{fontSize:38}}>✅</div><div style={{fontSize:13,color:C.green,fontWeight:600,wordBreak:'break-all',maxWidth:220}}>{fileName}</div><div style={{fontSize:11,color:C.sub}}>Chargé — cliquer pour remplacer</div></>
+      ):(
+        <><div style={{fontSize:40}}>{accent?'📁':'📂'}</div><div style={{fontSize:14,fontWeight:600,color:C.text}}>{label}</div><div style={{fontSize:12,color:C.sub}}>Glisser-déposer ou cliquer{optional&&<><br/><span style={{color:C.muted,fontSize:11}}>(optionnel)</span></>}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>.txt · .csv · sep. | ou tab</div></>
+      )}
+    </label>
+  );
+}
+
+// ═══════════════════════════════ TRÉSO JOURNALIÈRE ════════════════════════
+function TresoPanel({dn,dn1,yearN}){
+  const serie =dn?.tresoJournaliere||[];
+  const serie1=dn1?.tresoJournaliere||[];
+  const[zoom,setZoom]=useState('year');
+
+  const ZOOMS=[{k:'year',l:'Année'},{k:'Q1',l:'T1'},{k:'Q2',l:'T2'},{k:'Q3',l:'T3'},{k:'Q4',l:'T4'},{k:'6m',l:'S2'},{k:'3m',l:'3m'}];
+  const mRanges={Q1:['01','03'],Q2:['04','06'],Q3:['07','09'],Q4:['10','12'],'6m':['07','12'],'3m':['10','12']};
+
+  const filter=useCallback((s)=>{
+    if(zoom==='year'||!s.length) return s;
+    const[from,to]=mRanges[zoom];
+    return s.filter(d=>d.date.substring(4,6)>=from&&d.date.substring(4,6)<=to);
+  },[zoom]);
+
+  const filtered =useMemo(()=>filter(serie), [serie,zoom]);
+  const filtered1=useMemo(()=>filter(serie1),[serie1,zoom]);
+
+  if(!serie.length) return(
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:40,textAlign:'center',color:C.sub,fontSize:14}}>
+      Aucun mouvement de trésorerie (comptes 51x/52x) détecté dans ce FEC.
+    </div>
+  );
+
+  const soldeMin=Math.min(...filtered.map(d=>d.solde));
+  const soldeMax=Math.max(...filtered.map(d=>d.solde));
+  const soldeFin=filtered[filtered.length-1]?.solde||0;
+  const tresoMoy=filtered.length>0?Math.round(filtered.reduce((a,d)=>a+d.solde,0)/filtered.length):0;
+  const totalEntrees=filtered.reduce((a,d)=>a+d.entrees,0);
+  const totalSorties=filtered.reduce((a,d)=>a+d.sorties,0);
+  const dangerDays=filtered.filter(d=>d.solde<0).length;
+  const lineColor=soldeFin>=0?'#34D399':'#F87171';
+
+  const CustomTooltip=({active,payload})=>{
+    if(!active||!payload?.[0])return null;
+    const d=payload[0].payload;
+    return(
+      <div style={{background:'#111827',border:'1px solid #374151',borderRadius:10,padding:'12px 16px',minWidth:220,boxShadow:'0 8px 24px rgba(0,0,0,.7)'}}>
+        <div style={{fontSize:11,color:'#9CA3AF',fontWeight:600,marginBottom:8,paddingBottom:6,borderBottom:'1px solid #1F2937'}}>{d.dateF}</div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+          <span style={{fontSize:12,color:'#9CA3AF'}}>Solde</span>
+          <span style={{fontSize:13,fontWeight:700,fontFamily:"'DM Mono'",color:d.solde>=0?'#34D399':'#F87171'}}>{fmt(d.solde)}</span>
+        </div>
+        {d.entrees>0&&<div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+          <span style={{fontSize:11,color:'#9CA3AF'}}>↑ Entrées</span>
+          <span style={{fontSize:12,fontFamily:"'DM Mono'",color:'#34D399'}}>+{fmt(d.entrees)}</span>
+        </div>}
+        {d.sorties>0&&<div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+          <span style={{fontSize:11,color:'#9CA3AF'}}>↓ Sorties</span>
+          <span style={{fontSize:12,fontFamily:"'DM Mono'",color:'#F87171'}}>-{fmt(d.sorties)}</span>
+        </div>}
+        {d.details?.length>0&&(
+          <div style={{marginTop:8,paddingTop:6,borderTop:'1px solid #1F2937'}}>
+            {d.details.slice(0,3).map((dt,i)=>(
+              <div key={i} style={{fontSize:10,color:'#6B7280',marginBottom:2,display:'flex',justifyContent:'space-between',gap:8}}>
+                <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{dt.lib}</span>
+                <span style={{color:dt.montant>0?'#34D399':'#F87171',fontFamily:"'DM Mono'",flexShrink:0}}>{dt.montant>0?'+':''}{fmt(dt.montant,true)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {/* KPIs — 6 cartes avec tréso moyenne */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:10}}>
+        {[
+          {l:'Solde fin période',    v:soldeFin,     col:soldeFin>=0?'#34D399':'#F87171', em:'💳'},
+          {l:'Tréso. moyenne',       v:tresoMoy,     col:tresoMoy>=0?'#60A5FA':'#F87171', em:'∅'},
+          {l:'Solde minimum',        v:soldeMin,     col:soldeMin>=0?'#34D399':'#F87171', em:'📉'},
+          {l:'Solde maximum',        v:soldeMax,     col:'#60A5FA',                        em:'📈'},
+          {l:'Total encaissements',  v:totalEntrees, col:'#34D399',                        em:'↑'},
+          {l:'Total décaissements',  v:totalSorties, col:'#F87171',                        em:'↓'},
+        ].map((k,i)=>(
+          <div key={i} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:13,padding:'12px 14px',position:'relative',overflow:'hidden'}}>
+            <div style={{position:'absolute',inset:0,background:`radial-gradient(circle at 80% 20%,${k.col}18,transparent 65%)`,pointerEvents:'none'}}/>
+            <div style={{fontSize:9,color:C.sub,fontWeight:700,textTransform:'uppercase',letterSpacing:0.8,marginBottom:6,lineHeight:1.3}}>{k.l}</div>
+            <div style={{fontSize:16,fontWeight:700,fontFamily:"'DM Mono'",color:k.col,letterSpacing:'-0.5px'}}>{fmt(k.v,true)}</div>
+            <div style={{position:'absolute',top:9,right:9,fontSize:14,opacity:0.22}}>{k.em}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Graphique — LineChart garantit la visibilité de la courbe */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18,flexWrap:'wrap',gap:10}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:700,color:C.text}}>Solde de trésorerie — {yearN}</div>
+            <div style={{fontSize:11,color:C.sub,marginTop:2}}>
+              {filtered.length} jours · amplitude {fmt(soldeMin,true)} → {fmt(soldeMax,true)}
+              {dangerDays>0&&<span style={{color:'#F87171',fontWeight:600}}> · {dangerDays}j en négatif</span>}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:3,background:C.surf,padding:3,borderRadius:9,border:`1px solid ${C.border}`}}>
+            {ZOOMS.map(z=>(
+              <button key={z.k} onClick={()=>setZoom(z.k)} style={{background:zoom===z.k?C.borderL:'transparent',border:'none',borderRadius:6,padding:'5px 12px',color:zoom===z.k?C.text:C.sub,fontSize:12,fontWeight:zoom===z.k?600:400,cursor:'pointer',transition:'all .15s'}}>{z.l}</button>
+            ))}
+          </div>
+        </div>
+
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart data={filtered} margin={{top:8,right:12,left:8,bottom:0}}>
+            <defs>
+              <linearGradient id="gTresoFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor={lineColor} stopOpacity={0.18}/>
+                <stop offset="95%" stopColor={lineColor} stopOpacity={0.02}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="2 6" stroke={C.border} vertical={false}/>
+            <XAxis dataKey="idx" type="number"
+              domain={['dataMin','dataMax']}
+              stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:11}} axisLine={false} tickLine={false}
+              tickFormatter={idx=>{const d=filtered[idx-filtered[0]?.idx];return d?.label||'';}}
+              interval={0} ticks={filtered.filter(d=>d.label).map(d=>d.idx)}/>
+            <YAxis stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:10}} axisLine={false} tickLine={false}
+              tickFormatter={v=>v>=1000?Math.round(v/1000)+'k€':v+'€'} width={62}/>
+            <Tooltip content={<CustomTooltip/>}/>
+            <ReferenceLine y={0} stroke="#F87171" strokeDasharray="4 3" strokeOpacity={0.6} strokeWidth={1.5}/>
+            <ReferenceLine y={tresoMoy} stroke="#60A5FA" strokeDasharray="3 5" strokeOpacity={0.5} strokeWidth={1}/>
+            <Area type="monotone" dataKey="solde" stroke="none" fill="url(#gTresoFill)" dot={false}/>
+            <Line type="monotone" dataKey="solde" stroke={lineColor} strokeWidth={2.5} dot={false}
+              activeDot={{r:5,fill:lineColor,stroke:'#060810',strokeWidth:2}}/>
+            {dn1&&filtered1.length>0&&(
+              <Line type="monotone" data={filtered1} dataKey="solde"
+                stroke="#6B7280" strokeWidth={1.5} strokeDasharray="4 3" dot={false} opacity={0.7}/>
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+
+        <div style={{marginTop:12,display:'flex',gap:20,fontSize:11,color:C.sub}}>
+          <span style={{display:'flex',alignItems:'center',gap:6}}>
+            <span style={{width:24,height:2.5,background:lineColor,display:'inline-block',borderRadius:2}}/>
+            Solde {yearN}
+          </span>
+          <span style={{display:'flex',alignItems:'center',gap:6}}>
+            <span style={{width:24,height:2,background:'#60A5FA',display:'inline-block',borderRadius:2,opacity:0.6}}/>
+            Moyenne ({fmt(tresoMoy,true)})
+          </span>
+          {dn1&&<span style={{display:'flex',alignItems:'center',gap:6}}>
+            <span style={{width:24,height:2,background:'#6B7280',display:'inline-block',borderRadius:2,opacity:0.6}}/>
+            {yearN-1}
+          </span>}
+        </div>
+      </div>
+
+      {/* ── CASH BURN MENSUEL ────────────────────────────────────────── */}
+      {(()=>{
+        // Agrégation par mois depuis la série complète (pas filtrée par zoom)
+        const burnByMonth = MOIS.map((m,i)=>{
+          const mk = String(i+1).padStart(2,'0');
+          const jours = serie.filter(d=>d.date.substring(4,6)===mk);
+          const enc = jours.reduce((a,d)=>a+d.entrees,0);
+          const dec = jours.reduce((a,d)=>a+d.sorties,0);
+          const net = enc - dec;
+          return {name:m, mk, enc:Math.round(enc), dec:Math.round(dec), net:Math.round(net)};
+        });
+        const burnMoyen3m = Math.round(
+          burnByMonth.filter(m=>m.dec>0).slice(-3).reduce((a,m)=>a+m.dec,0) /
+          Math.max(1, burnByMonth.filter(m=>m.dec>0).slice(-3).length)
+        );
+        const runway = burnMoyen3m>0 ? (soldeFin/burnMoyen3m).toFixed(1) : '∞';
+        const runwayNum = burnMoyen3m>0 ? soldeFin/burnMoyen3m : 99;
+
+        // Détection des mois aberrants (burn > moyenne + 1.5σ)
+        const burns = burnByMonth.map(m=>m.dec).filter(v=>v>0);
+        const burnMean = burns.reduce((a,v)=>a+v,0)/Math.max(1,burns.length);
+        const burnStd = Math.sqrt(burns.reduce((a,v)=>a+(v-burnMean)**2,0)/Math.max(1,burns.length));
+        const threshold = burnMean + 1.5*burnStd;
+
+        const tt2={contentStyle:{background:'#111827',border:'1px solid #374151',borderRadius:10,color:C.text,fontSize:12},cursor:{fill:'rgba(255,255,255,0.04)'}};
+
+        return(
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+            {/* Header + runway */}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:18,flexWrap:'wrap',gap:12}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>Cash Burn mensuel</div>
+                <div style={{fontSize:11,color:C.sub,marginTop:2}}>Flux entrants · flux sortants · net mensuel</div>
+              </div>
+              {/* Runway KPI */}
+              <div style={{display:'flex',gap:12}}>
+                <div style={{background:C.surf,border:`1px solid ${runwayNum<3?'#F87171':runwayNum<6?C.orange:C.green}40`,borderRadius:12,padding:'10px 16px',textAlign:'center',minWidth:120}}>
+                  <div style={{fontSize:10,color:C.sub,fontWeight:700,textTransform:'uppercase',letterSpacing:0.8,marginBottom:4}}>Runway</div>
+                  <div style={{fontSize:22,fontWeight:800,fontFamily:"'DM Mono'",color:runwayNum<3?'#F87171':runwayNum<6?C.orange:C.green}}>{runway}<span style={{fontSize:12,fontWeight:400,color:C.sub}}> mois</span></div>
+                  <div style={{fontSize:10,color:C.muted,marginTop:2}}>Solde ÷ burn moyen 3m</div>
+                </div>
+                <div style={{background:C.surf,border:`1px solid ${C.border}`,borderRadius:12,padding:'10px 16px',textAlign:'center',minWidth:120}}>
+                  <div style={{fontSize:10,color:C.sub,fontWeight:700,textTransform:'uppercase',letterSpacing:0.8,marginBottom:4}}>Burn moy. 3m</div>
+                  <div style={{fontSize:18,fontWeight:800,fontFamily:"'DM Mono'",color:'#F87171'}}>{fmt(burnMoyen3m,true)}</div>
+                  <div style={{fontSize:10,color:C.muted,marginTop:2}}>Décaissements / mois</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Graphique barres enc/dec + ligne net */}
+            <ResponsiveContainer width="100%" height={240}>
+              <ComposedChart data={burnByMonth} barCategoryGap="20%" barGap={2} margin={{top:4,right:8,left:4,bottom:0}}>
+                <CartesianGrid strokeDasharray="2 5" stroke={C.border} vertical={false}/>
+                <XAxis dataKey="name" stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis stroke={C.muted} tick={{fill:'#9CA3AF',fontSize:9}} axisLine={false} tickLine={false}
+                  tickFormatter={v=>v>=1000?Math.round(v/1000)+'k':v} width={46}/>
+                <Tooltip {...tt2}
+                  formatter={(v,nm)=>[fmt(Math.abs(v)), nm==='enc'?'Encaissements':nm==='dec'?'Décaissements':'Net']}/>
+                <ReferenceLine y={0} stroke={C.muted} strokeDasharray="3 3"/>
+                {/* Ligne seuil aberrant */}
+                <ReferenceLine y={-threshold} stroke="#F87171" strokeDasharray="4 4" strokeOpacity={0.4} strokeWidth={1}/>
+                <Bar dataKey="enc"  name="enc"  stackId="a" fill="#34D399" radius={[0,0,0,0]} maxBarSize={28} opacity={0.85}/>
+                <Bar dataKey="dec" name="dec" stackId="b"
+                  maxBarSize={28} radius={[3,3,0,0]}>
+                  {burnByMonth.map((d,i)=>(
+                    <Cell key={i} fill={d.dec>threshold?'#F87171':'#F87171'} opacity={d.dec>threshold?1:0.65}/>
+                  ))}
+                </Bar>
+                <Line type="monotone" dataKey="net" name="net" stroke="#60A5FA" strokeWidth={2} dot={false}
+                  activeDot={{r:4,fill:'#60A5FA'}}/>
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            {/* Légende + alertes */}
+            <div style={{marginTop:12,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+              <div style={{display:'flex',gap:16,fontSize:11,color:C.sub}}>
+                <span style={{display:'flex',alignItems:'center',gap:5}}><span style={{width:12,height:12,borderRadius:3,background:'#34D399',display:'inline-block'}}/> Encaissements</span>
+                <span style={{display:'flex',alignItems:'center',gap:5}}><span style={{width:12,height:12,borderRadius:3,background:'#F87171',display:'inline-block'}}/> Décaissements</span>
+                <span style={{display:'flex',alignItems:'center',gap:5}}><span style={{width:16,height:2,background:'#60A5FA',display:'inline-block',borderRadius:2}}/> Net mensuel</span>
+                <span style={{display:'flex',alignItems:'center',gap:5}}><span style={{width:16,height:1,background:'#F87171',display:'inline-block',borderRadius:2,opacity:0.4}}/> Seuil aberrant (+1,5σ)</span>
+              </div>
+              {/* Mois aberrants */}
+              {burnByMonth.filter(m=>m.dec>threshold).length>0&&(
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <span style={{fontSize:10,color:'#F87171',fontWeight:700}}>⚠️ Mois atypiques :</span>
+                  {burnByMonth.filter(m=>m.dec>threshold).map((m,i)=>(
+                    <span key={i} style={{fontSize:10,color:'#F87171',background:'rgba(248,113,113,.1)',padding:'2px 8px',borderRadius:10,border:'1px solid rgba(248,113,113,.2)'}}>{m.name}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Top 10 mouvements avec libellés */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#34D399',textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>↑ Top 10 encaissements</div>
+          {[...filtered].sort((a,b)=>b.entrees-a.entrees).slice(0,10).map((d,i)=>{
+            const topLib=d.details?.filter(x=>x.montant>0).sort((a,b)=>b.montant-a.montant)[0]?.lib||'';
+            return(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 10px',borderRadius:7,marginBottom:3,background:'rgba(52,211,153,.06)',border:'1px solid rgba(52,211,153,.12)'}}>
+                <div style={{display:'flex',flexDirection:'column',gap:1,minWidth:0,flex:1,marginRight:8}}>
+                  <span style={{fontSize:11,color:C.sub,fontFamily:"'DM Mono'",flexShrink:0}}>{d.dateF}</span>
+                  {topLib&&<span style={{fontSize:10,color:'#6B7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{topLib}</span>}
+                </div>
+                <span style={{fontSize:12,fontWeight:600,color:'#34D399',fontFamily:"'DM Mono'",flexShrink:0}}>+{fmt(d.entrees,true)}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#F87171',textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>↓ Top 10 décaissements</div>
+          {[...filtered].sort((a,b)=>b.sorties-a.sorties).slice(0,10).map((d,i)=>{
+            const topLib=d.details?.filter(x=>x.montant<0).sort((a,b)=>a.montant-b.montant)[0]?.lib||'';
+            return(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 10px',borderRadius:7,marginBottom:3,background:'rgba(248,113,113,.06)',border:'1px solid rgba(248,113,113,.12)'}}>
+                <div style={{display:'flex',flexDirection:'column',gap:1,minWidth:0,flex:1,marginRight:8}}>
+                  <span style={{fontSize:11,color:C.sub,fontFamily:"'DM Mono'",flexShrink:0}}>{d.dateF}</span>
+                  {topLib&&<span style={{fontSize:10,color:'#6B7280',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{topLib}</span>}
+                </div>
+                <span style={{fontSize:12,fontWeight:600,color:'#F87171',fontFamily:"'DM Mono'",flexShrink:0}}>{fmt(d.sorties,true)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════ BENCHMARK SECTORIEL AUTO ═══════════════════
+// Pipeline : INSEE Sirene → INPI bilans saisis → percentiles locaux
+// Données sources : mêmes que Pappers (INPI open data) · 100% gratuit
+// Compte requis : data.inpi.fr (inscription gratuite)
+function BenchmarkPanel({dn,yearN}){
+  const[login,setLogin]=useState(()=>localStorage.getItem('inpi_login')||'');
+  const[pwd,setPwd]=useState(()=>localStorage.getItem('inpi_pwd')||'');
+  const[showPwd,setShowPwd]=useState(false);
+  const[ape,setApe]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[steps,setSteps]=useState([]);
+  const[error,setError]=useState('');
+  const[result,setResult]=useState(null);
+
+  const PROXY='https://corsproxy.io/?url=';
+  const INPI='https://registre-national-entreprises.inpi.fr/api';
+  const px=url=>PROXY+encodeURIComponent(url);
+
+  const addStep=(label,detail='')=>setSteps(s=>[...s,{label,detail,status:'run'}]);
+  const doneStep=(detail='')=>setSteps(s=>s.map((st,i)=>i===s.length-1?{...st,status:'ok',detail}:st));
+  const failStep=(detail='')=>setSteps(s=>s.map((st,i)=>i===s.length-1?{...st,status:'err',detail}:st));
+
+  // Flexible extractor : cherche une valeur dans un objet par liste de clés candidates
+  const getVal=(obj,...keys)=>{
+    if(!obj||typeof obj!=='object') return null;
+    for(const k of keys){
+      if(obj[k]!==undefined&&obj[k]!==null&&!isNaN(Number(obj[k]))) return Number(obj[k]);
+    }
+    // Recherche récursive sur 2 niveaux
+    for(const sub of Object.values(obj)){
+      if(sub&&typeof sub==='object'&&!Array.isArray(sub)){
+        for(const k of keys){
+          if(sub[k]!==undefined&&sub[k]!==null&&!isNaN(Number(sub[k]))) return Number(sub[k]);
+        }
+      }
+    }
+    return null;
+  };
+
+  const pctVal=(arr,p)=>{
+    const s=[...arr].sort((a,b)=>a-b);
+    if(!s.length)return undefined;
+    const i=(s.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);
+    return lo===hi?s[lo]:s[lo]+(s[hi]-s[lo])*(i-lo);
+  };
+  const buildP=arr=>{
+    const s=arr.filter(v=>v!==null&&isFinite(v)&&Math.abs(v)<1e10).sort((a,b)=>a-b);
+    if(s.length<3)return null;
+    return{q10:pctVal(s,.1),q25:pctVal(s,.25),q50:pctVal(s,.5),q75:pctVal(s,.75),q90:pctVal(s,.9),n:s.length};
+  };
+  const getPctPos=(v,p,higher)=>{
+    if(v===null||v===undefined||!p||p.q50===undefined)return null;
+    const q10=p.q10??p.q50*.5,q90=p.q90??p.q50*1.5,q25=p.q25??p.q50*.75,q75=p.q75??p.q50*1.25;
+    let r;
+    if(v<=q10)r=5;
+    else if(v<=q25)r=10+(v-q10)/(q25-q10)*15;
+    else if(v<=p.q50)r=25+(v-q25)/(p.q50-q25)*25;
+    else if(v<=q75)r=50+(v-p.q50)/(q75-p.q50)*25;
+    else if(v<=q90)r=75+(v-q75)/(q90-q75)*15;
+    else r=95;
+    if(!higher)r=100-r;
+    return Math.round(Math.max(2,Math.min(98,r)));
+  };
+
+  const run=async()=>{
+    if(!login.trim()||!pwd.trim()){setError('Entrez vos identifiants data.inpi.fr');return;}
+    if(!ape.trim()){setError('Renseignez le code NAF (ex: 69.20Z)');return;}
+    setLoading(true);setError('');setResult(null);setSteps([]);
+    const nafRaw=ape.trim();
+    const nafNoPoint=nafRaw.replace('.',''); // 6920Z
+
+    try{
+      // ── Étape 1 : Login INPI ─────────────────────────────────────────
+      addStep('🔐 Connexion INPI (data.inpi.fr)…');
+      const loginResp=await fetch(px(`${INPI}/sso/login`),{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({username:login.trim(),password:pwd})
+      });
+      if(!loginResp.ok){
+        const txt=await loginResp.text().catch(()=>'');
+        throw new Error(`Login INPI échoué (${loginResp.status}). Vérifiez vos identifiants data.inpi.fr. ${txt.substring(0,100)}`);
+      }
+      const loginData=await loginResp.json();
+      const token=loginData.token||loginData.access_token||loginData.jwt||Object.values(loginData).find(v=>typeof v==='string'&&v.length>20);
+      if(!token) throw new Error(`Token INPI non trouvé. Réponse : ${JSON.stringify(loginData).substring(0,200)}`);
+      localStorage.setItem('inpi_login',login.trim());
+      localStorage.setItem('inpi_pwd',pwd);
+      doneStep('Token obtenu ✓');
+
+      // ── Étape 2 : SIRENs par NAF ─────────────────────────────────────
+      addStep(`🔍 Recherche entreprises NAF ${nafRaw}…`);
+      let sirens=[];
+      let sirenSource='';
+
+      // Tentative 1 : INSEE recherche-entreprises (CORS natif, sans proxy)
+      try{
+        const inseeResp=await fetch(
+          `https://recherche-entreprises.api.gouv.fr/search?activite_principale=${encodeURIComponent(nafRaw)}&etat_administratif=A&per_page=25`,
+          {signal:AbortSignal.timeout(8000)}
+        );
+        if(inseeResp.ok){
+          const d=await inseeResp.json();
+          sirens=(d.results||[]).map(c=>c.siren).filter(Boolean);
+          sirenSource='INSEE';
+        }
+      }catch(e){console.log('[Bench] INSEE direct failed:',e.message);}
+
+      // Tentative 2 : INSEE via proxy
+      if(!sirens.length){
+        try{
+          const inseeResp=await fetch(
+            px(`https://recherche-entreprises.api.gouv.fr/search?activite_principale=${encodeURIComponent(nafRaw)}&etat_administratif=A&per_page=25`)
+          );
+          if(inseeResp.ok){
+            const d=await inseeResp.json();
+            sirens=(d.results||[]).map(c=>c.siren).filter(Boolean);
+            sirenSource='INSEE (proxy)';
+          }
+        }catch(e){console.log('[Bench] INSEE proxy failed:',e.message);}
+      }
+
+      // Tentative 3 : INPI company search par NAF
+      if(!sirens.length){
+        for(const nafFmt of[nafNoPoint,nafRaw]){
+          try{
+            const inpiSearch=await fetch(
+              px(`${INPI}/companies?codeNaf=${nafFmt}&pageSize=25&page=1`),
+              {headers:{'Authorization':`Bearer ${token}`}}
+            );
+            if(inpiSearch.ok){
+              const d=await inpiSearch.json();
+              const list=d.companies||d.results||d||[];
+              if(Array.isArray(list)&&list.length){
+                sirens=list.map(c=>c.siren||c.identifiant).filter(Boolean);
+                sirenSource='INPI';
+                break;
+              }
+            }
+          }catch(e){console.log('[Bench] INPI search failed:',e.message);}
+        }
+      }
+
+      if(!sirens.length) throw new Error(`Aucune entreprise trouvée pour NAF "${nafRaw}". Vérifiez le code NAF ou essayez un code plus général (ex: 6920 sans la lettre).`);
+      doneStep(`${sirens.length} entreprises · source : ${sirenSource}`);
+
+      // ── Étape 3 : Bilans saisis INPI ────────────────────────────────
+      const MAX=Math.min(sirens.length,25);
+      addStep(`📑 Récupération des bilans INPI (${MAX} entreprises)…`);
+      const financials=[];
+      let errCount=0;
+      let rawSample=null;
+
+      // Log du premier SIREN pour debug structure
+      if(sirens.length>0){
+        const debugSiren=sirens[0];
+        try{
+          const dbgResp=await fetch(px(`${INPI}/companies/${debugSiren}/attachments`),{headers:{'Authorization':`Bearer ${token}`}});
+          const dbgTxt=await dbgResp.text();
+          console.log(`[INPI DEBUG] /companies/${debugSiren}/attachments status:`,dbgResp.status);
+          console.log(`[INPI DEBUG] réponse brute:`,dbgTxt.substring(0,1000));
+          // Essayer aussi la route formalités
+          const dbgResp2=await fetch(px(`${INPI}/companies/${debugSiren}`),{headers:{'Authorization':`Bearer ${token}`}});
+          const dbgTxt2=await dbgResp2.text();
+          console.log(`[INPI DEBUG] /companies/${debugSiren} status:`,dbgResp2.status);
+          console.log(`[INPI DEBUG] fiche entreprise:`,dbgTxt2.substring(0,500));
+        }catch(dbgE){console.log('[INPI DEBUG] erreur probe:',dbgE.message);}
+      }
+
+      for(const siren of sirens.slice(0,MAX)){
+        try{
+          // Liste des pièces jointes
+          const attUrl=`${INPI}/companies/${siren}/attachments`;
+          const attResp=await fetch(px(attUrl),{headers:{'Authorization':`Bearer ${token}`}});
+          if(!attResp.ok){
+            console.log(`[INPI ${siren}] attachments ${attResp.status}`);
+            errCount++;continue;
+          }
+          const attRaw=await attResp.text();
+          let att;
+          try{att=JSON.parse(attRaw);}catch(e){console.log(`[INPI ${siren}] JSON parse error:`,attRaw.substring(0,200));errCount++;continue;}
+          if(!rawSample) console.log(`[INPI ${siren}] structure attachments:`,JSON.stringify(att).substring(0,600));
+
+          // Structure flexible : tableau direct OU objet avec clés
+          const allItems=Array.isArray(att)?att
+            :att.bilans||att.comptes||att.documents||att.attachments
+            ||att.pieces||att.data||att.results||[];
+
+          if(!allItems.length){
+            console.log(`[INPI ${siren}] aucun item dans:`,Object.keys(att).join(','));
+            continue;
+          }
+          if(!rawSample) console.log(`[INPI ${siren}] premier item:`,JSON.stringify(allItems[0]));
+
+          // Chercher les bilans saisis — filtre très souple
+          const bilanItems=allItems.filter(b=>{
+            if(!b||typeof b!=='object') return false;
+            const t=JSON.stringify(b).toLowerCase();
+            // Accepter tout ce qui ressemble à un bilan/compte annuel
+            return t.includes('bilan')||t.includes('compte')
+              ||t.includes('annuel')||t.includes('financial')
+              ||t.includes('saisi')||t.includes('compteresultat');
+          });
+
+          const candidates=bilanItems.length?bilanItems:allItems;
+
+          // Trier par date desc
+          const sorted=[...candidates].sort((a,b)=>{
+            const da=a.dateDepot||a.dateClotureExercice||a.date||a.dateCloture||'';
+            const db=b.dateDepot||b.dateClotureExercice||b.date||b.dateCloture||'';
+            return db.localeCompare(da);
+          });
+          const latest=sorted[0];
+          const bilanId=latest?.id||latest?.identifiant||latest?.numeroDepot||latest?.reference;
+
+          if(!bilanId){
+            console.log(`[INPI ${siren}] pas d'id dans:`,JSON.stringify(latest||{}).substring(0,200));
+            continue;
+          }
+          console.log(`[INPI ${siren}] bilanId=${bilanId} type=${latest?.type||latest?.typeBilan||'?'}`);
+
+          // Récupérer les données du bilan — essayer plusieurs routes
+          let bilan=null;
+          for(const route of[
+            `${INPI}/companies/${siren}/bilans/${bilanId}`,
+            `${INPI}/companies/${siren}/accounts/${bilanId}`,
+            `${INPI}/companies/${siren}/attachments/${bilanId}`,
+          ]){
+            try{
+              const br=await fetch(px(route),{headers:{'Authorization':`Bearer ${token}`}});
+              if(br.ok){bilan=await br.json();console.log(`[INPI ${siren}] route ok: ${route.split('/').slice(-2).join('/')}`);break;}
+              else console.log(`[INPI ${siren}] ${route.split('/').slice(-3).join('/')} → ${br.status}`);
+            }catch(re){console.log(`[INPI ${siren}] route error:`,re.message);}
+          }
+          if(!bilan) continue;
+          if(!rawSample){rawSample=bilan;console.log(`[INPI bilan ${siren}] FULL:`,JSON.stringify(bilan).substring(0,1000));}
+
+          // ── Parser flexible ──────────────────────────────────────────
+          // Tenter de naviguer dans les structures courantes INPI
+          const cr=bilan?.compteDeResultat||bilan?.compteResultat||bilan?.compte_de_resultat
+            ||bilan?.donneesComptables?.compteDeResultat||bilan;
+          const passifObj=bilan?.bilanPassif||bilan?.bilan_passif
+            ||bilan?.donneesComptables?.bilanPassif||bilan;
+          const actifObj=bilan?.bilanActif||bilan?.bilan_actif
+            ||bilan?.donneesComptables?.bilanActif||bilan;
+
+          const ca=getVal(cr,
+            'chiffreAffairesNet','chiffre_affaires_net','caNet','CA_NET',
+            'totalProduits','produitsExploitation','HN','YN','218');
+          const rnet=getVal(cr,
+            'resultatExercice','resultat_exercice','resultatNet','RESULTAT_NET',
+            'HI','YI','370','DI');
+          const rexpl=getVal(cr,
+            'resultatExploitation','resultat_exploitation','REX','HF','YF','280');
+          const chargesPersonnel=getVal(cr,
+            'chargesPersonnel','charges_personnel','salaires','HL','YL','chargesSociales');
+          const achats=getVal(cr,
+            'achatsMarchandises','achatsMatieres','HA','YA','achatsBruts','HA_net');
+          const totalPassif=getVal(passifObj,
+            'totalPassif','total_passif','TOTAL_PASSIF','DL','totaux');
+          const capitauxPropres=getVal(passifObj,
+            'capitauxPropres','capitaux_propres','totalCapitauxPropres','CAPITAUX_PROPRES','DA','DL_propres');
+          const totalDettes=getVal(passifObj,
+            'totalDettes','total_dettes','dettes','DR','DT','dettesBrutes');
+          const actifCirculant=getVal(actifObj,
+            'totalActifCirculant','actifCirculant','actif_circulant','BJ','BX','actifCirc');
+          const dettesCT=getVal(passifObj,
+            'dettesInferieureUnAn','dettesMoinsUnAn','dettesCT','DV','DP','dettesLessOneYear');
+          const immoNet=getVal(actifObj,
+            'totalActifImmobilise','actifImmobilise','actifImmo','BN','immoNet');
+          const immoBrut=getVal(actifObj,
+            'totalBrut','actifBrut','BX_brut','immoBrut');
+          const immoAmort=getVal(actifObj,
+            'totalAmortissements','amortissements','BX_amort');
+
+          // Valider la cohérence
+          if(!ca||ca<=0) continue;
+
+          const row={
+            siren,ca,rnet,rexpl,chargesPersonnel,achats,
+            totalPassif,capitauxPropres,totalDettes,
+            actifCirculant,dettesCT,immoNet,immoBrut,immoAmort,
+            mb:achats!==null?ca-achats:null, // marge brute approx
+          };
+          financials.push(row);
+        }catch(e){
+          errCount++;
+          console.log(`[INPI] Erreur ${siren}:`,e.message);
+        }
+      }
+
+      const nbOk=financials.length;
+      if(nbOk<3){
+        const msg=rawSample
+          ?`Seulement ${nbOk} bilan(s) exploitable(s). Voir console F12 pour la structure INPI brute.`
+          :`Aucun bilan saisi disponible. Ce secteur a probablement une forte confidentialité (>${errCount} erreurs).`;
+        if(rawSample) console.log('[INPI] Structure complète d\'un bilan:',JSON.stringify(rawSample,null,2));
+        throw new Error(msg);
+      }
+      doneStep(`${nbOk} bilans exploitables`);
+
+      // ── Étape 4 : Percentiles ────────────────────────────────────────
+      addStep('📊 Calcul des percentiles sectoriels…');
+      const vals=fn=>financials.map(fn).filter(v=>v!==null&&isFinite(v)&&Math.abs(v)<1e10);
+
+      // Client
+      const clientCA=dn.ca||0;
+      const clientCP=dn.bilan?.cpTotal||0;
+      const clientPassif=dn.bilan?.totalPassif||0;
+      const clientActifCirc=dn.bilan?.totalActifCirc||0;
+      const clientDettesCT=(dn.bilan?.detteFrs||0)+(dn.bilan?.detteSoc||0)+(dn.bilan?.detteFisc||0)+(dn.bilan?.autresDettes||0);
+      const clientDettesTot=dn.bilan?.detTotal||0;
+
+      const RATIOS=[
+        {
+          label:'Résultat net / CA',
+          note:'Rentabilité nette après IS · %',
+          col:C.green,higher:true,
+          fmt:v=>v.toFixed(1)+'%',
+          clientVal:clientCA>0?(dn.rnet||0)/clientCA*100:null,
+          perc:buildP(vals(c=>c.ca>0&&c.rnet!==null?c.rnet/c.ca*100:null)),
+        },
+        {
+          label:'Marge brute / CA',
+          note:'(CA − Achats consommés) / CA · %',
+          col:C.teal,higher:true,
+          fmt:v=>v.toFixed(1)+'%',
+          clientVal:clientCA>0?(dn.mb||0)/clientCA*100:null,
+          perc:buildP(vals(c=>c.ca>0&&c.mb!==null?c.mb/c.ca*100:null)),
+        },
+        {
+          label:'Résultat exploitation / CA',
+          note:'REX / CA · %',
+          col:C.gold,higher:true,
+          fmt:v=>v.toFixed(1)+'%',
+          clientVal:clientCA>0?(dn.rex||0)/clientCA*100:null,
+          perc:buildP(vals(c=>c.ca>0&&c.rexpl!==null?c.rexpl/c.ca*100:null)),
+        },
+        {
+          label:'Autonomie financière',
+          note:'Capitaux propres / Passif total · %',
+          col:C.blue,higher:true,
+          fmt:v=>v.toFixed(1)+'%',
+          clientVal:clientPassif>0?clientCP/clientPassif*100:null,
+          perc:buildP(vals(c=>c.totalPassif>0&&c.capitauxPropres!==null?c.capitauxPropres/c.totalPassif*100:null)),
+        },
+        {
+          label:'Taux d\'endettement',
+          note:'Dettes totales / Passif · % · (bas = mieux)',
+          col:C.orange,higher:false,
+          fmt:v=>v.toFixed(1)+'%',
+          clientVal:clientPassif>0?clientDettesTot/clientPassif*100:null,
+          perc:buildP(vals(c=>c.totalPassif>0&&c.totalDettes!==null?c.totalDettes/c.totalPassif*100:null)),
+        },
+        {
+          label:'Liquidité générale',
+          note:'Actif circulant / Dettes CT · ratio',
+          col:C.purple,higher:true,
+          fmt:v=>v.toFixed(2)+'x',
+          clientVal:clientDettesCT>0?clientActifCirc/clientDettesCT:null,
+          perc:buildP(vals(c=>c.dettesCT>0&&c.actifCirculant!==null?c.actifCirculant/c.dettesCT:null)),
+        },
+      ].filter(r=>r.perc||r.clientVal!==null);
+
+      const nbRatios=RATIOS.filter(r=>r.perc).length;
+      doneStep(`${nbRatios}/${RATIOS.length} ratios avec percentiles`);
+
+      setResult({
+        naf:nafRaw,nbSirens:sirens.length,nbBilans:nbOk,sirenSource,
+        ratios:RATIOS,rawSample,
+        fieldsFound:financials[0]?Object.entries(financials[0]).filter(([k,v])=>v!==null&&k!=='siren').map(([k,v])=>`${k}=${typeof v==='number'?v.toFixed(0):v}`):[]
+      });
+    }catch(e){
+      setError(e.message);
+      if(steps.length) failStep(e.message.substring(0,80));
+      console.error('[Bench]',e);
+    }finally{setLoading(false);}
+  };
+
+  // ── Jauge ──────────────────────────────────────────────────────────────
+  const Gauge=({label,note,clientVal,perc,fmt,col,higher})=>{
+    const pos=getPctPos(clientVal,perc,higher);
+    const colPos=pos===null?C.muted:pos>=75?C.green:pos>=40?C.goldL:C.red;
+    const verdict=pos===null?null:pos>=75?'↑ Supérieur au secteur':pos>=55?'Dans le haut':pos>=40?'Dans la médiane':pos>=20?'Sous la médiane':'↓ Inférieur au secteur';
+    const marks=[10,25,50,75,90];
+    return(
+      <div style={{padding:'16px 20px',borderRadius:14,background:C.card,border:`1px solid ${C.border}`,marginBottom:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:perc?14:4}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,color:C.text}}>{label}</div>
+            <div style={{fontSize:10,color:C.muted,marginTop:2,fontStyle:'italic'}}>{note}</div>
+          </div>
+          <div style={{textAlign:'right'}}>
+            {clientVal!==null&&clientVal!==undefined
+              ?<div style={{fontSize:22,fontWeight:800,fontFamily:"'DM Mono'",color:perc?colPos:C.text}}>{fmt(clientVal)}</div>
+              :<div style={{fontSize:11,color:C.muted,marginTop:6}}>Bilan requis</div>}
+            {verdict&&<div style={{fontSize:10,fontWeight:600,color:colPos,marginTop:2}}>{verdict}</div>}
+          </div>
+        </div>
+        {perc?(
+          <>
+            <div style={{position:'relative',height:14,marginBottom:26}}>
+              <div style={{position:'absolute',inset:0,background:`linear-gradient(90deg,${C.red}30,${C.goldL}30,${C.green}30)`,borderRadius:7}}/>
+              <div style={{position:'absolute',left:'25%',width:'50%',height:'100%',background:`${C.gold}20`,borderRadius:4}}/>
+              {marks.map(m=><div key={m} style={{position:'absolute',left:`${m}%`,top:-16,transform:'translateX(-50%)',fontSize:8,color:C.muted}}>Q{m}</div>)}
+              {marks.map(m=><div key={m+'b'} style={{position:'absolute',left:`${m}%`,top:0,width:1,height:'100%',background:C.borderL}}/>)}
+              {[{p:10,v:perc.q10},{p:25,v:perc.q25},{p:50,v:perc.q50},{p:75,v:perc.q75},{p:90,v:perc.q90}].map(m=>(
+                m.v!==undefined&&<div key={m.p+'v'} style={{position:'absolute',left:`${m.p}%`,top:18,transform:'translateX(-50%)',fontSize:8,color:C.muted,fontFamily:"'DM Mono'",whiteSpace:'nowrap'}}>{fmt(m.v)}</div>
+              ))}
+              {pos!==null&&<div style={{position:'absolute',left:`${pos}%`,top:'50%',transform:'translate(-50%,-50%)',width:20,height:20,borderRadius:'50%',background:colPos,border:'2px solid #060810',zIndex:10,boxShadow:`0 0 10px ${colPos}90`,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:6,height:6,borderRadius:'50%',background:'white'}}/></div>}
+            </div>
+            <div style={{display:'flex',gap:6}}>
+              {[['Q10',perc.q10],['Q25',perc.q25],['Médiane',perc.q50],['Q75',perc.q75],['Q90',perc.q90]].map(([l,v])=>(
+                <div key={l} style={{flex:1,textAlign:'center',padding:'4px 2px',borderRadius:6,background:C.surf,border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:8,color:C.muted,marginBottom:1}}>{l}</div>
+                  <div style={{fontFamily:"'DM Mono'",fontWeight:600,color:l==='Médiane'?C.goldL:C.sub,fontSize:9}}>{v!==undefined?fmt(v):'—'}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:5,fontSize:9,color:C.muted,textAlign:'right'}}>{perc.n} entreprises · source INPI (même base que Pappers)</div>
+          </>
+        ):(
+          <div style={{fontSize:11,color:C.muted,fontStyle:'italic',marginTop:4,padding:'8px 12px',borderRadius:8,background:C.surf}}>
+            Ratio non calculable — données insuffisantes dans les bilans saisis pour ce secteur
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Step indicator ─────────────────────────────────────────────────────
+  const StepList=()=>(
+    <div style={{marginTop:12,display:'flex',flexDirection:'column',gap:4}}>
+      {steps.map((s,i)=>(
+        <div key={i} style={{display:'flex',gap:8,alignItems:'center',fontSize:11}}>
+          <span style={{width:16,textAlign:'center',fontSize:13}}>
+            {s.status==='run'?'⏳':s.status==='ok'?'✅':'❌'}
+          </span>
+          <span style={{color:s.status==='err'?C.red:s.status==='ok'?C.green:C.sub}}>
+            {s.label}
+          </span>
+          {s.detail&&<span style={{color:C.muted,fontSize:10}}>— {s.detail}</span>}
+        </div>
+      ))}
+    </div>
+  );
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+
+      {/* Config + lancement */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:24}}>
+        <div style={{marginBottom:18}}>
+          <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>🎯 Benchmark sectoriel INPI</div>
+          <div style={{fontSize:12,color:C.sub,lineHeight:1.7}}>
+            Même source que <span style={{color:C.goldL,fontWeight:600}}>Pappers</span> : bilans saisis INPI (Registre national des entreprises)<br/>
+            <span style={{fontSize:11,color:C.muted}}>Compte data.inpi.fr requis · <a href="https://data.inpi.fr" target="_blank" style={{color:C.blue}}>Inscription gratuite</a> · Vos identifiants ne quittent jamais votre navigateur</span>
+          </div>
+        </div>
+
+        {/* Credentials */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 120px 120px',gap:10,alignItems:'end',flexWrap:'wrap'}}>
+          <div>
+            <div style={{fontSize:10,color:C.sub,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:.8}}>Login data.inpi.fr</div>
+            <input value={login} onChange={e=>setLogin(e.target.value)} placeholder="email@domaine.fr"
+              style={{background:C.surf,border:`1px solid ${C.borderL}`,borderRadius:9,padding:'9px 12px',color:C.text,fontSize:12,width:'100%',boxSizing:'border-box'}}/>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:C.sub,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:.8}}>Mot de passe</div>
+            <div style={{position:'relative'}}>
+              <input value={pwd} onChange={e=>setPwd(e.target.value)} type={showPwd?'text':'password'} placeholder="••••••••"
+                style={{background:C.surf,border:`1px solid ${C.borderL}`,borderRadius:9,padding:'9px 34px 9px 12px',color:C.text,fontSize:12,width:'100%',boxSizing:'border-box'}}/>
+              <span onClick={()=>setShowPwd(v=>!v)} style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',cursor:'pointer',fontSize:14,color:C.muted}}>{showPwd?'🙈':'👁'}</span>
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:C.sub,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:.8}}>Code NAF</div>
+            <input value={ape} onChange={e=>setApe(e.target.value.toUpperCase())} onKeyDown={e=>e.key==='Enter'&&run()}
+              placeholder="69.20Z"
+              style={{background:C.surf,border:`1px solid ${C.borderL}`,borderRadius:9,padding:'9px 12px',color:C.text,fontSize:14,width:'100%',fontFamily:"'DM Mono'",fontWeight:600,boxSizing:'border-box'}}/>
+          </div>
+          <div>
+            <div style={{fontSize:10,color:C.sub,fontWeight:600,marginBottom:4,textTransform:'uppercase',letterSpacing:.8}}>‎</div>
+            <button onClick={run} disabled={loading}
+              style={{background:loading?C.muted:`linear-gradient(135deg,${C.gold},${C.goldL})`,border:'none',borderRadius:9,padding:'9px 0',color:'#fff',fontSize:13,fontWeight:700,cursor:loading?'default':'pointer',width:'100%',height:38}}>
+              {loading?'⏳…':'🔍 Analyser'}
+            </button>
+          </div>
+        </div>
+
+        {/* Progress */}
+        {steps.length>0&&<StepList/>}
+        {error&&<div style={{marginTop:12,padding:'12px 16px',borderRadius:10,background:`${C.red}12`,border:`1px solid ${C.red}30`,color:C.red,fontSize:12,lineHeight:1.6}}>⚠️ {error}</div>}
+      </div>
+
+      {/* Résultats */}
+      {result&&(
+        <>
+          {/* Méta */}
+          <div style={{background:C.surf,border:`1px solid ${C.borderL}`,borderRadius:12,padding:'12px 20px',display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
+            <span style={{fontSize:11,color:C.sub}}>NAF <span style={{color:C.goldL,fontFamily:"'DM Mono'",fontWeight:700}}>{result.naf}</span></span>
+            <span style={{fontSize:11,color:C.sub}}>Entreprises trouvées <span style={{fontWeight:700,color:C.text}}>{result.nbSirens}</span></span>
+            <span style={{fontSize:11,color:C.sub}}>Bilans exploitables <span style={{fontWeight:700,color:C.green}}>{result.nbBilans}</span></span>
+            <span style={{fontSize:11,color:C.sub}}>Source SIRENs <span style={{fontWeight:700,color:C.text}}>{result.sirenSource}</span></span>
+            <span style={{marginLeft:'auto',fontSize:10,color:C.muted,fontStyle:'italic'}}>INPI/RNE · Licence Ouverte 2.0 · même base que Pappers</span>
+          </div>
+
+          {/* Jauges */}
+          {result.ratios.map((r,i)=><Gauge key={i} {...r}/>)}
+
+          {/* Champs trouvés dans les bilans (debug) */}
+          {result.fieldsFound?.length>0&&(
+            <div style={{padding:'12px 16px',borderRadius:10,background:C.surf,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,color:C.muted,marginBottom:6,fontWeight:600}}>🔬 Champs extraits du premier bilan (debug)</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                {result.fieldsFound.map((f,i)=>(
+                  <span key={i} style={{fontSize:9,color:C.sub,background:C.card,padding:'2px 8px',borderRadius:10,border:`1px solid ${C.border}`,fontFamily:"'DM Mono'"}}>{f}</span>
+                ))}
+              </div>
+              <div style={{marginTop:6,fontSize:9,color:C.muted}}>Structure JSON complète disponible dans F12 → Console → "[INPI bilan]"</div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* État initial */}
+      {!result&&!loading&&!error&&(
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:48,textAlign:'center'}}>
+          <div style={{fontSize:40,marginBottom:14,opacity:.5}}>🏗️</div>
+          <div style={{fontSize:15,color:C.text,fontWeight:600,marginBottom:10}}>Benchmark INPI · même pipeline que Pappers</div>
+          <div style={{fontSize:13,color:C.sub,maxWidth:540,margin:'0 auto',lineHeight:1.9}}>
+            <span style={{color:C.blue}}>①</span> Connexion INPI (data.inpi.fr) · compte gratuit<br/>
+            <span style={{color:C.goldL}}>②</span> INSEE → entreprises actives du même NAF<br/>
+            <span style={{color:C.green}}>③</span> INPI → bilans saisis par SIREN (données brutes)<br/>
+            <span style={{color:C.purple}}>④</span> Percentiles Q10→Q90 calculés dans votre navigateur<br/>
+            <span style={{fontSize:11,color:C.muted}}>Vos identifiants sont stockés localement · jamais transmis à un tiers</span>
+          </div>
+          <div style={{marginTop:16,padding:'10px 16px',borderRadius:10,background:`${C.blue}10`,border:`1px solid ${C.blue}20`,fontSize:12,color:C.sub,maxWidth:400,margin:'16px auto 0'}}>
+            💡 Pas encore de compte INPI ?&nbsp;
+            <a href="https://data.inpi.fr" target="_blank" style={{color:C.blue,fontWeight:600}}>data.inpi.fr</a>
+            &nbsp;— inscription gratuite en 2 min
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App(){
+  const[files,setFiles]=useState({n:null,n1:null});
+  const[entries,setEntries]=useState({n:null,n1:null});
+  const[data,setData]=useState({n:null,n1:null});
+  const[yearN,setYearN]=useState(new Date().getFullYear());
+  const[company,setCompany]=useState('');
+  const[tab,setTab]=useState('sig');
+  const[loading,setLoading]=useState(false);
+  const[error,setError]=useState('');
+  const[drill,setDrill]=useState(null);
+
+  const processText=(text,key)=>{
+    try{
+      const ents=parseFEC(text);
+      if(!ents.length){setError('Fichier non reconnu. Vérifiez le format FEC.');return;}
+      const sig=computeSIG(ents);
+      if(sig.year&&key==='n')setYearN(sig.year);
+      setEntries(prev=>({...prev,[key]:ents}));
+      setData(prev=>({...prev,[key]:sig}));
+      setError('');
+    }catch(e){setError('Erreur: '+e.message);}
+  };
+
+  // Lecture d'un fichier et attribution automatique N / N-1
+  const readFileText=(file)=>new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=e=>resolve(e.target.result);
+    r.onerror=()=>reject(new Error('Lecture impossible'));
+    r.readAsText(file,'UTF-8');
+  });
+
+  const handleFiles=useCallback(async(fileList)=>{
+    const fArray=Array.from(fileList).filter(f=>f.size>0).slice(0,2);
+    if(!fArray.length)return;
+    setLoading(true);setError('');
+    try{
+      // Lire tous les fichiers
+      const parsed=await Promise.all(fArray.map(async f=>{
+        const text=await readFileText(f);
+        const ents=parseFEC(text);
+        if(!ents.length)throw new Error(`Fichier "${f.name}" non reconnu. Vérifiez le format FEC.`);
+        const sig=computeSIG(ents);
+        return{name:f.name,ents,sig,year:sig.year||new Date().getFullYear()};
+      }));
+
+      // Tri : le plus récent = N, le plus ancien = N-1
+      parsed.sort((a,b)=>b.year-a.year);
+      const[pN,pN1]=parsed;
+
+      setYearN(pN.year);
+      setEntries({n:pN.ents,n1:pN1?pN1.ents:null});
+      setData({n:pN.sig,n1:pN1?pN1.sig:null});
+      setFiles({n:pN.name,n1:pN1?pN1.name:null});
+    }catch(e){
+      setError(e.message);
+    }finally{
+      setLoading(false);
+    }
+  },[]);
+
+  // Compat : handleFile utilisé par le bouton "+N-1" dans le dashboard
+  const handleFile=useCallback((file,key)=>{
+    setLoading(true);
+    const r=new FileReader();
+    r.onload=e=>{processText(e.target.result,key);setLoading(false);};
+    r.onerror=()=>{setError('Impossible de lire.');setLoading(false);};
+    r.readAsText(file,'UTF-8');
+  },[]);
+
+  const loadDemo=()=>{
+    setCompany('SARL SERVICES MÉDITERRANÉE (DÉMO)');
+    processText(DEMO_N,'n');
+    processText(DEMO_N1,'n1');
+    setFiles({n:'demo_2024.fec',n1:'demo_2023.fec'});
+    setYearN(2024);
+  };
+
+  const dn=data.n,dn1=data.n1;
+  const TABS=[{k:'sig',l:'Soldes Intermédiaires de Gestion'},{k:'mensuel',l:'Analyses mensuelles'},{k:'treso',l:'💳 Trésorerie'},{k:'charges',l:'Structure charges'},{k:'bilan',l:'Bilan simplifié'},{k:'bench',l:'🎯 Benchmark sectoriel'}];
+
+  return(
+    <div style={{minHeight:'100vh',background:C.bg}}>
+      {/* ── HEADER */}
+      <div style={{background:C.surf,borderBottom:`1px solid ${C.border}`,padding:'14px 36px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:150}}>
+        <div style={{display:'flex',alignItems:'center',gap:14}}>
+          <div style={{width:38,height:38,background:`linear-gradient(135deg, ${C.gold} 0%, ${C.goldL} 100%)`,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'DM Serif Display'",fontSize:21,color:'#fff',boxShadow:`0 4px 16px ${C.gold}50`}}>A</div>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,letterSpacing:'-0.3px'}}>Financiel Vision</div>
+            <div style={{fontSize:11,color:C.sub}}>Outil d'analyse financière · créé par Romain Froment</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          {!dn&&<button onClick={loadDemo} style={{background:`linear-gradient(135deg,${C.gold},${C.goldL})`,border:'none',borderRadius:9,padding:'8px 18px',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',boxShadow:`0 4px 14px ${C.gold}40`}}>🎭 Charger la démo</button>}
+          {dn&&<>
+            <input value={company} onChange={e=>setCompany(e.target.value)} placeholder="Raison sociale…" style={{background:C.card,border:`1px solid ${C.borderL}`,borderRadius:8,padding:'7px 14px',color:C.text,fontSize:13,width:220}}/>
+            <input type="number" value={yearN} onChange={e=>setYearN(Number(e.target.value))} style={{background:C.card,border:`1px solid ${C.borderL}`,borderRadius:8,padding:'7px 10px',color:C.text,fontSize:13,width:78}}/>
+            {!dn1&&<label className="btn-ghost" style={{display:'inline-flex',alignItems:'center',gap:6,cursor:'pointer'}}>＋ N-1<input type="file" accept=".txt,.csv,.tsv,.fec" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f){setFiles(p=>({...p,n1:f.name}));handleFile(f,'n1');}}}/></label>}
+            <button className="btn-ghost" onClick={()=>{setData({n:null,n1:null});setEntries({n:null,n1:null});setFiles({n:null,n1:null});setDrill(null);}}>↩ Reset</button>
+          </>}
+        </div>
+      </div>
+
+      {/* ── UPLOAD */}
+      {!dn&&(
+        <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:'calc(100vh - 71px)',gap:40}}>
+          <div style={{textAlign:'center'}}>
+            <div style={{fontFamily:"'DM Serif Display'",fontSize:38,color:C.text,marginBottom:10}}>Analyse financière FEC</div>
+            <div style={{fontSize:15,color:C.sub,maxWidth:520,lineHeight:1.6}}>Déposez 1 ou 2 fichiers FEC pour obtenir vos SIG, analyses mensuelles et drill-down jusqu'aux écritures.</div>
+          </div>
+
+          {/* Zone de dépôt unique */}
+          <UnifiedDropZone onFiles={handleFiles} files={files} loading={loading}/>
+
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:14}}>
+            <div style={{color:C.muted,fontSize:13,display:'flex',alignItems:'center',gap:10}}>
+              <div style={{height:1,width:80,background:C.border}}/> ou <div style={{height:1,width:80,background:C.border}}/>
+            </div>
+            <button onClick={loadDemo} style={{background:`linear-gradient(135deg,${C.gold},${C.goldL})`,border:'none',borderRadius:12,padding:'13px 32px',color:'#fff',fontSize:15,fontWeight:700,cursor:'pointer',boxShadow:`0 6px 24px ${C.gold}45`,letterSpacing:'-0.2px'}}>🎭 Charger les données de démonstration</button>
+            <div style={{fontSize:12,color:C.muted}}>SARL SERVICES MÉDITERRANÉE · 2023 &amp; 2024 · ~480k€ CA</div>
+          </div>
+
+          {error&&<div style={{color:C.red,fontSize:13,background:`${C.red}18`,padding:'10px 20px',borderRadius:8,maxWidth:480,textAlign:'center'}}>{error}</div>}
+          <div style={{fontSize:11,color:C.muted}}>🔒 100% local — aucune donnée transmise au serveur</div>
+        </div>
+      )}
+
+      {/* ── DASHBOARD */}
+      {dn&&(
+        <div style={{padding:'24px 36px 40px',maxWidth:1380,margin:'0 auto'}}>
+          {/* Title */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:20}} className="fu">
+            <div>
+              <div style={{fontFamily:"'DM Serif Display'",fontSize:24,color:C.text}}>{company||'Analyse financière'}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:3}}>Exercice {yearN}{dn1?` vs ${yearN-1}`:''} · {files.n}{dn1&&` · ${files.n1}`}</div>
+            </div>
+            <div style={{display:'flex',gap:6}}>
+              <button onClick={()=>{loadDemo();}} className="btn-ghost">🎭 Recharger démo</button>
+            </div>
+          </div>
+
+          {/* KPIs */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+            <KPICard label="Chiffre d'affaires" value={dn.ca} prev={dn1?.ca} color={C.blue} emoji="📈" delay={0}/>
+            <KPICard label="EBE" value={dn.ebe} prev={dn1?.ebe} color={C.gold} emoji="⚙️" refCA={dn.ca} delay={60}/>
+            <KPICard label="Résultat Net" value={dn.rnet} prev={dn1?.rnet} color={dn.rnet>=0?C.green:C.red} emoji="🏆" refCA={dn.ca} delay={120}/>
+            <KPICard label="Trésorerie" value={dn.treso} prev={dn1?.tresoActif} color={C.purple} emoji="💰" delay={180}/>
+          </div>
+
+          {/* Tabs */}
+          <div style={{display:'flex',gap:2,marginBottom:16,background:C.surf,padding:4,borderRadius:11,width:'fit-content',border:`1px solid ${C.border}`}}>
+            {TABS.map(t=>(
+              <button key={t.k} onClick={()=>setTab(t.k)} style={{background:tab===t.k?C.borderL:'transparent',border:'none',borderRadius:8,padding:'8px 20px',color:tab===t.k?C.text:C.sub,fontSize:13,fontWeight:tab===t.k?600:400,cursor:'pointer',transition:'all .18s'}}>
+                {t.l}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div key={tab} className="fu">
+            {tab==='sig'     && <SIGTable dn={dn} dn1={dn1} yearN={yearN} entries={entries.n} onDrill={row=>{setDrill(row);}}/>}
+            {tab==='mensuel' && <MensuelAnalyse dn={dn} dn1={dn1} yearN={yearN}/>}
+            {tab==='treso'   && <TresoPanel dn={dn} dn1={dn1} yearN={yearN}/>}
+            {tab==='charges' && <ChargesPanel dn={dn} dn1={dn1} yearN={yearN}/>}
+            {tab==='bilan'   && <BilanPanel dn={dn} dn1={dn1} yearN={yearN} entries={entries.n}/>}
+            {tab==='bench'   && <BenchmarkPanel dn={dn} yearN={yearN}/>}
+          </div>
+
+          <div style={{marginTop:24,fontSize:11,color:C.muted,textAlign:'center'}}>
+            Financiel Vision · Traitement 100% local, données confidentielles
+          </div>
+        </div>
+      )}
+
+      {/* ── DRILL PANEL */}
+      {drill&&(
+        <>
+          <div onClick={()=>setDrill(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:199,backdropFilter:'blur(2px)'}}/>
+          <DrillPanel entries={entries.n} sigRow={drill} dn={dn} onClose={()=>setDrill(null)}/>
+        </>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.render(<App/>,document.getElementById('root'));
+</script>
+</body>
+</html>
