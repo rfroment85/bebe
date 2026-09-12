@@ -93,6 +93,14 @@ def build_queries(since, tri="date_published"):
         # Sépare « sujet absent » de « fenêtre trop récente ».
         "B1_sujet_sans_date": q([any_of("article_body", EFACTURE_CORE)], sort=None),
 
+        # B2 : volume du sujet DANS la fenêtre. B1 ignore les dates et Q1 est
+        # restreint à une locution étroite : sans B2, aucun chiffre ne dit
+        # l'ampleur réelle de la conversation depuis `since`.
+        # Préfixe B = comptage seul, jamais collecté : --all sur ce volume
+        # coûterait des milliers de crédits.
+        "B2_volume_sujet_fenetre": q([since_range(since), any_of("article_body", EFACTURE)],
+                                     sort=None),
+
         # --- Questions de fond ------------------------------------------------
         "Q1_plateforme_agreee": q([since_range(since), any_of("article_body", AGREEES)], sort=tri),
         "Q2_friction": q([
@@ -265,6 +273,13 @@ def verdict(totals, since):
     elif fresh is not None:
         print(f"\nB0 = {fresh} : l'index est alimenté depuis {since}, un zéro ci-dessus serait")
         print("donc une absence réelle et pas un défaut de fraîcheur.")
+    fenetre = n("B2_volume_sujet_fenetre")
+    if fenetre is not None:
+        q1 = n("Q1_plateforme_agreee")
+        print(f"B2 = {fenetre} : posts sur le sujet depuis {since}, toutes formulations.")
+        if q1:
+            print(f"     Q1 ({q1}) n'en represente que {100.0 * q1 / max(fenetre, 1):.1f}% : le reste")
+            print("     parle du sujet sans employer le vocabulaire 'plateforme agreee'.")
     if topic == 0:
         print("B1 = 0 : le sujet facturation électronique FR est absent de l'index toutes dates")
         print("confondues → couverture thématique nulle, pas un problème de fenêtre temporelle.")
