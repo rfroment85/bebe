@@ -69,6 +69,7 @@ EFACTURE = [
     "facture électronique", "facturation électronique", "e-invoicing",
     "factur-x", "peppol", "Chorus Pro", "portail public de facturation",
 ]
+EFACTURE_CORE = ["facture électronique", "facturation électronique", "e-invoicing"]
 FRICTION = ["rejet", "rejetée", "annuaire", "migration", "bug", "bloqué", "erreur", "panne"]
 TEMOINS = ["Anne Richer", "Grégoire Leclercq", "Adil Cherkaoui", "Cyrille Sautereau", "Christophe Viry"]
 
@@ -78,10 +79,10 @@ def build_queries(since):
         # --- Baselines : à lire AVANT tout le reste ---------------------------
         # B0 : l'index contient-il quoi que ce soit depuis `since` ? Si total ≈ 0,
         # l'index n'est pas à jour et tous les zéros suivants ne prouvent rien.
-        "B0_fraicheur_index": q([since_range(since)]),
+        "B0_fraicheur_index": q([since_range(since)], sort=False),
         # B1 : le sujet existe-t-il dans l'index, toutes dates confondues ?
         # Sépare « sujet absent » de « fenêtre trop récente ».
-        "B1_sujet_sans_date": q([any_of("article_body", EFACTURE)]),
+        "B1_sujet_sans_date": q([any_of("article_body", EFACTURE_CORE)], sort=False),
 
         # --- Questions de fond ------------------------------------------------
         "Q1_plateforme_agreee": q([since_range(since), any_of("article_body", AGREEES)]),
@@ -99,14 +100,34 @@ def build_queries(since):
     }
 
 
+TRANSIENT = (500, 502, 503, 504)
+
+
+def _post_once(path, body, attempts=4):
+    """POST en réessayant les erreurs transitoires (503 = requête trop lourde côté serveur).
+
+    Backoff 2s, 4s, 8s. Une réponse d'erreur n'étant pas facturée, réessayer ne coûte rien.
+    """
+    r = None
+    for i in range(attempts):
+        r = requests.post(f"{BASE}/{path}/search/es_dsl", headers=HEADERS, json=body, timeout=90)
+        if r.status_code not in TRANSIENT:
+            return r
+        if i < attempts - 1:
+            delay = 2 ** (i + 1)
+            print(f"   {r.status_code} transitoire — nouvelle tentative dans {delay}s…")
+            time.sleep(delay)
+    return r
+
+
 def post(payload):
-    """POST avec repli sur l'autre chemin et sans tri si l'API refuse le sort."""
+    """POST avec repli sur l'autre chemin et sans tri si l'API refuse ou sature."""
     global _WORKING_PATH
     last = None
     paths = [_WORKING_PATH] if _WORKING_PATH else PATHS
     for p in paths:
         for body in (payload, {k: v for k, v in payload.items() if k != "sort"}):
-            r = requests.post(f"{BASE}/{p}/search/es_dsl", headers=HEADERS, json=body, timeout=60)
+            r = _post_once(p, body)
             if r.status_code == 200:
                 _WORKING_PATH = p
                 return p, r
@@ -116,7 +137,7 @@ def post(payload):
             # 401/403/429 = clé ou quota → inutile d'insister.
             if r.status_code in (401, 403, 429):
                 return None, r
-            if r.status_code != 400 and r.status_code != 422:
+            if r.status_code not in (400, 422) + TRANSIENT:
                 break
     return None, last
 
@@ -171,24 +192,41 @@ def verdict(totals, since):
             return None
 
     print("\n--- Lecture ---")
+    QS = ("Q1_plateforme_agreee", "Q2_friction", "Q3_auteurs_temoins")
     fresh, topic = n("B0_fraicheur_index"), n("B1_sujet_sans_date")
-    if fresh is None or topic is None:
-        print("Baselines indisponibles (B0=%s, B1=%s) : sans elles, un zéro sur Q1/Q2/Q3"
-              % (totals.get("B0_fraicheur_index"), totals.get("B1_sujet_sans_date")))
-        print("ne distingue pas « sujet absent » de « index pas à jour ». Corrige l'erreur avant de conclure.")
+
+    for name in QS:
+        print(f"{name} : {totals.get(name, 'non exécutée')}")
+
+    # Une baseline ne sert qu'à interpréter un zéro. Si toutes les questions
+    # ont ramené des résultats, elles sont surnuméraires.
+    zeros = [name for name in QS if n(name) == 0]
+    errs = [name for name in QS if n(name) is None]
+    manquantes = [b for b, v in (("B0", fresh), ("B1", topic)) if v is None]
+
     if fresh == 0:
-        print("B0 = 0 : aucun post indexé depuis", since, "→ l'index n'est pas à jour sur cette")
-        print("fenêtre. Les zéros de Q1/Q2/Q3 ne prouvent RIEN sur ce qui s'est dit sur LinkedIn.")
+        print(f"\nB0 = 0 : aucun post indexé depuis {since} → l'index n'est pas à jour sur cette")
+        print("fenêtre. Les zéros ci-dessus ne prouvent RIEN sur ce qui s'est dit sur LinkedIn.")
     elif fresh is not None:
-        print(f"B0 = {fresh} : l'index est alimenté depuis {since}, les zéros suivants sont donc")
-        print("des absences réelles et pas un défaut de fraîcheur.")
+        print(f"\nB0 = {fresh} : l'index est alimenté depuis {since}, un zéro ci-dessus serait")
+        print("donc une absence réelle et pas un défaut de fraîcheur.")
     if topic == 0:
         print("B1 = 0 : le sujet facturation électronique FR est absent de l'index toutes dates")
         print("confondues → couverture thématique nulle, pas un problème de fenêtre temporelle.")
     elif topic is not None:
         print(f"B1 = {topic} : le sujet est présent dans l'index (toutes dates).")
-    for name in ("Q1_plateforme_agreee", "Q2_friction", "Q3_auteurs_temoins"):
-        print(f"{name} : {totals.get(name, 'non exécutée')}")
+
+    if manquantes and (zeros or errs):
+        print(f"\nBaseline(s) {', '.join(manquantes)} en erreur ET {', '.join(zeros + errs)} sans")
+        print("résultat exploitable : relance avant de conclure, ce zéro n'est pas interprétable.")
+    elif manquantes:
+        print(f"\nBaseline(s) {', '.join(manquantes)} en erreur, mais toutes les questions ont ramené")
+        print("des résultats : elles n'étaient là que pour interpréter un zéro. Sans zéro, non bloquant.")
+
+    nonzero = [name for name in QS if (n(name) or 0) > 0]
+    if nonzero:
+        print(f"\nCouverture confirmée : {', '.join(nonzero)} rendent des posts. Relance sans")
+        print("--dry-run (1 crédit/post) pour lire le contenu.")
 
 
 def main():
