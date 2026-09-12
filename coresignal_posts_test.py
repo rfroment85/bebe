@@ -51,10 +51,11 @@ def since_range(since):
     return {"range": {"date_published": {"gte": since}}}
 
 
-def q(must, sort=True):
+def q(must, sort="date_published"):
+    """sort : 'date_published', 'reaction_count', ou None pour ne pas trier."""
     body = {"query": {"bool": {"must": must}}}
     if sort:
-        body["sort"] = [{"date_published": {"order": "desc"}}]
+        body["sort"] = [{sort: {"order": "desc"}}]
     return body
 
 
@@ -69,34 +70,46 @@ EFACTURE = [
     "facture électronique", "facturation électronique", "e-invoicing",
     "factur-x", "peppol", "Chorus Pro", "portail public de facturation",
 ]
+# Q2 croise le sujet avec des mots de friction génériques ("migration",
+# "erreur"...). Avec "e-invoicing" dans la liste, les annonces d'emploi SAP
+# anglophones ("e-invoicing" + "Data Migration") satisfont les deux clauses.
+# Sur Q2 uniquement, on exige donc un ancrage lexical français.
+EFACTURE_FR = [
+    "facture électronique", "facturation électronique", "factur-x",
+    "Chorus Pro", "portail public de facturation",
+]
 EFACTURE_CORE = ["facture électronique", "facturation électronique", "e-invoicing"]
 FRICTION = ["rejet", "rejetée", "annuaire", "migration", "bug", "bloqué", "erreur", "panne"]
 TEMOINS = ["Anne Richer", "Grégoire Leclercq", "Adil Cherkaoui", "Cyrille Sautereau", "Christophe Viry"]
 
-def build_queries(since):
-    """Construit le jeu de requêtes pour une date plancher donnée."""
+def build_queries(since, tri="date_published"):
+    """Construit le jeu de requêtes pour une date plancher et un tri donnés."""
     return {
         # --- Baselines : à lire AVANT tout le reste ---------------------------
         # B0 : l'index contient-il quoi que ce soit depuis `since` ? Si total ≈ 0,
         # l'index n'est pas à jour et tous les zéros suivants ne prouvent rien.
-        "B0_fraicheur_index": q([since_range(since)], sort=False),
+        "B0_fraicheur_index": q([since_range(since)], sort=None),
         # B1 : le sujet existe-t-il dans l'index, toutes dates confondues ?
         # Sépare « sujet absent » de « fenêtre trop récente ».
-        "B1_sujet_sans_date": q([any_of("article_body", EFACTURE_CORE)], sort=False),
+        "B1_sujet_sans_date": q([any_of("article_body", EFACTURE_CORE)], sort=None),
 
         # --- Questions de fond ------------------------------------------------
-        "Q1_plateforme_agreee": q([since_range(since), any_of("article_body", AGREEES)]),
+        "Q1_plateforme_agreee": q([since_range(since), any_of("article_body", AGREEES)], sort=tri),
         "Q2_friction": q([
             since_range(since),
-            any_of("article_body", EFACTURE),
+            any_of("article_body", EFACTURE_FR),
             {"bool": {"should": [{"match": {"article_body": w}} for w in FRICTION],
                       "minimum_should_match": 1}},
-        ]),
+        ], sort=tri),
         # Les témoins remontent un peu plus haut : on veut leurs posts d'amorce.
+        # Garde thématique obligatoire : `author_name` seul ne distingue pas
+        # deux personnes homonymes (le run du 12/09 a ramené six posts d'un
+        # universitaire casablancais portant le même nom qu'un expert du sujet).
         "Q3_auteurs_temoins": q([
             since_range("2026-08-15"),
             any_of("author_name", TEMOINS),
-        ]),
+            any_of("article_body", AGREEES + EFACTURE),
+        ], sort=tri),
     }
 
 
@@ -235,10 +248,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="recherches seules : compte les résultats sans collecter (1 crédit/requête)")
     ap.add_argument("--since", default=SINCE, help=f"date plancher (défaut {SINCE})")
+    ap.add_argument("--tri", choices=["date", "reactions"], default="date",
+                    help="ordre de collecte : 'date' (plus récents) ou 'reactions' "
+                         "(plus relayés — échantillon plus représentatif)")
     ap.add_argument("--out", default="coresignal_posts_sample.jsonl")
     args = ap.parse_args()
 
-    queries = build_queries(args.since)
+    tri = "reaction_count" if args.tri == "reactions" else "date_published"
+    queries = build_queries(args.since, tri)
 
     totals, seen, n_written = {}, set(), 0
     out = None if args.dry_run else open(args.out, "w", encoding="utf-8")
