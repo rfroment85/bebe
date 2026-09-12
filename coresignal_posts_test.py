@@ -134,46 +134,58 @@ def _post_once(path, body, attempts=4):
 
 
 def post(payload):
-    """POST avec repli sur l'autre chemin et sans tri si l'API refuse ou sature."""
+    """POST avec repli sur l'autre chemin et sans tri si l'API refuse ou sature.
+
+    Le repli « sans tri » change le SENS du résultat (on n'obtient plus les
+    posts les plus X, mais l'ordre par défaut de l'API) : il est donc annoncé
+    bruyamment et remonté à l'appelant, jamais avalé en silence.
+    """
     global _WORKING_PATH
     last = None
+    champ_tri = list(payload["sort"][0])[0] if payload.get("sort") else None
     paths = [_WORKING_PATH] if _WORKING_PATH else PATHS
     for p in paths:
-        for body in (payload, {k: v for k, v in payload.items() if k != "sort"}):
+        variantes = [(payload, False)]
+        if champ_tri:
+            variantes.append(({k: v for k, v in payload.items() if k != "sort"}, True))
+        for body, sans_tri in variantes:
             r = _post_once(p, body)
             if r.status_code == 200:
                 _WORKING_PATH = p
-                return p, r
+                if sans_tri:
+                    print(f"   /!\\ tri sur '{champ_tri}' REFUSE par l'API "
+                          f"({getattr(last, 'status_code', '?')}) — ordre par defaut, "
+                          f"l'echantillon n'est PAS trie par {champ_tri}")
+                return p, r, sans_tri
             last = r
             # 400/422 = corps refusé → retenter sans le tri.
             # 404 = mauvais chemin → passer au chemin suivant.
             # 401/403/429 = clé ou quota → inutile d'insister.
             if r.status_code in (401, 403, 429):
-                return None, r
+                return None, r, False
             if r.status_code not in (400, 422) + TRANSIENT:
                 break
-    return None, last
-
+    return None, last, False
 
 def search(name, payload):
-    path, r = post(payload)
+    path, r, sans_tri = post(payload)
     if r is None or r.status_code != 200:
         print(f"[{name}] ERREUR {getattr(r, 'status_code', None)} : {getattr(r, 'text', '')[:300]}")
-        return None, [], None
+        return None, [], None, False
     try:
         ids = r.json()
     except ValueError:
         print(f"[{name}] réponse non-JSON : {r.text[:200]}")
-        return path, [], None
+        return path, [], None, False
     # Selon les endpoints la réponse est une liste d'ids ou un objet l'encapsulant.
     if isinstance(ids, dict):
         ids = ids.get("data") or ids.get("ids") or ids.get("results") or []
     if not isinstance(ids, list):
         print(f"[{name}] forme de réponse inattendue : {type(ids).__name__}")
-        return path, [], None
+        return path, [], None, False
     total = r.headers.get("x-total-results") or r.headers.get("X-Total-Results")
     print(f"[{name}] total annoncé : {total or '?'} — ids reçus : {len(ids)} (chemin {path})")
-    return path, ids, total
+    return path, ids, total, sans_tri
 
 
 def collect(path, pid):
@@ -257,11 +269,13 @@ def main():
     tri = "reaction_count" if args.tri == "reactions" else "date_published"
     queries = build_queries(args.since, tri)
 
-    totals, seen, n_written = {}, set(), 0
+    totals, seen, n_written, tris_ignores, reacs = {}, set(), 0, [], {}
     out = None if args.dry_run else open(args.out, "w", encoding="utf-8")
     try:
         for name, payload in queries.items():
-            path, ids, total = search(name, payload)
+            path, ids, total, sans_tri = search(name, payload)
+            if sans_tri:
+                tris_ignores.append(name)
             totals[name] = total if total is not None else ("erreur" if path is None else len(ids))
             if args.dry_run or not ids or name.startswith("B"):
                 continue  # les baselines servent à compter, pas à collecter
@@ -274,6 +288,7 @@ def main():
                     continue
                 p["_query"] = name
                 out.write(json.dumps(p, ensure_ascii=False) + "\n")
+                reacs.setdefault(name, []).append(p.get("reaction_count") or 0)
                 n_written += 1
                 print(summarize(p))
                 time.sleep(0.05)
@@ -282,6 +297,19 @@ def main():
             out.close()
 
     verdict(totals, args.since)
+
+    if tris_ignores:
+        print(f"\nATTENTION — tri non applique sur : {', '.join(tris_ignores)}.")
+        print("L'API a refuse le critere demande et renvoye son ordre par defaut.")
+        print("Les posts collectes ne sont donc PAS les plus pertinents selon --tri.")
+    # Contrôle a posteriori : un 200 ne garantit pas que le tri a été honoré.
+    if args.tri == "reactions" and reacs:
+        desordre = [k for k, v in reacs.items() if v != sorted(v, reverse=True)]
+        if desordre:
+            print(f"\nATTENTION — ordre incoherent avec --tri reactions sur : "
+                  f"{', '.join(desordre)}.")
+            print("Les reactions collectees ne decroissent pas : l'API a ignore le tri")
+            print("sans le signaler. Traite cet echantillon comme non representatif.")
     if args.dry_run:
         print("\nDry-run : aucun post collecté. Relance sans --dry-run pour récupérer le contenu.")
     else:
