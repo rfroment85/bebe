@@ -349,6 +349,13 @@ def main():
     tri = "reaction_count" if args.tri == "reactions" else "date_published"
     queries = build_queries(args.since, tri)
     if args.sujet_complet:
+        # --sujet-complet promet la totalite du sujet : il implique donc --all.
+        # Sans cela, --collect (defaut 5) plafonnait silencieusement chaque
+        # journee a 5 posts et le corpus etait tronque a ~4% du volume reel.
+        if not args.all:
+            print("--sujet-complet implique --all : toutes les journees seront collectees "
+                  "en entier.\n   Utilise --budget N pour borner la depense.\n")
+            args.all = True
         vocab = EFACTURE if args.vocabulaire == "large" else EFACTURE_FR
         for j in jours(args.since):
             queries[f"J_{j}"] = requete_jour(j, vocab)
