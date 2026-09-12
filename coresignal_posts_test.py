@@ -22,6 +22,7 @@ ailleurs signifie « le sujet est absent » ou « l'index n'est pas à jour ».
 Sans elles, un résultat nul n'est pas interprétable.
 """
 import argparse, json, os, sys, time
+from datetime import date, timedelta
 import requests
 
 API_KEY = os.environ.get("CORESIGNAL_API_KEY")
@@ -119,6 +120,27 @@ def build_queries(since, tri="date_published"):
             any_of("article_body", AGREEES + EFACTURE),
         ], sort=tri),
     }
+
+
+def requete_jour(jour, vocab=None):
+    """Le sujet sur une seule journee.
+
+    La recherche plafonne a 1000 ids par reponse, tres en deca des volumes
+    du sujet sur la fenetre entiere. Le tri et la pagination etant refuses
+    par l'API, le seul decoupage fiable est temporel : une journee tient
+    largement sous le plafond.
+    """
+    vocab = vocab or EFACTURE_FR
+    lendemain = (date.fromisoformat(jour) + timedelta(days=1)).isoformat()
+    return q([{"range": {"date_published": {"gte": jour, "lt": lendemain}}},
+              any_of("article_body", vocab)], sort=None)
+
+
+def jours(depuis, jusqua=None):
+    d, fin = date.fromisoformat(depuis), (date.fromisoformat(jusqua) if jusqua else date.today())
+    while d <= fin:
+        yield d.isoformat()
+        d += timedelta(days=1)
 
 
 TRANSIENT = (500, 502, 503, 504)
@@ -311,13 +333,28 @@ def main():
     ap.add_argument("--all", action="store_true",
                     help="collecter TOUS les résultats de chaque question "
                          "(1 crédit/post — vérifie le total avec --dry-run avant)")
+    ap.add_argument("--sujet-complet", action="store_true",
+                    help="collecter TOUT le sujet sur la fenetre, jour par jour "
+                         "(contourne le plafond de 1000 ids ; ~1 credit par post, "
+                         "mesure le total avec --dry-run avant)")
+    ap.add_argument("--vocabulaire", choices=["fr", "large"], default="fr",
+                    help="pour --sujet-complet : 'fr' exige un ancrage lexical francais "
+                         "(plus pertinent, moins cher) ; 'large' ajoute e-invoicing/peppol "
+                         "et ramene les posts anglophones")
+    ap.add_argument("--budget", type=int, default=0,
+                    help="arreter la collecte apres N posts (garde-fou credits ; 0 = illimite)")
     ap.add_argument("--out", default="coresignal_posts_sample.jsonl")
     args = ap.parse_args()
 
     tri = "reaction_count" if args.tri == "reactions" else "date_published"
     queries = build_queries(args.since, tri)
+    if args.sujet_complet:
+        vocab = EFACTURE if args.vocabulaire == "large" else EFACTURE_FR
+        for j in jours(args.since):
+            queries[f"J_{j}"] = requete_jour(j, vocab)
 
     totals, n_written, tris_ignores, reacs = {}, 0, [], {}
+    budget_atteint = False
     # Reprise : on repart du fichier existant plutôt que de l'écraser, et on
     # ouvre en ajout. Un run interrompu ne coûte donc jamais deux fois.
     seen = set() if args.dry_run else deja_collectes(args.out)
@@ -326,17 +363,27 @@ def main():
     out = None if args.dry_run else open(args.out, "a", encoding="utf-8")
     try:
         for name, payload in queries.items():
+            if budget_atteint:
+                break
             path, ids, total, sans_tri = search(name, payload)
             if sans_tri:
                 tris_ignores.append(name)
             totals[name] = total if total is not None else ("erreur" if path is None else len(ids))
             if args.dry_run or not ids or name.startswith("B"):
                 continue  # les baselines servent à compter, pas à collecter
+            if len(ids) >= 1000:
+                print("   /!\\ 1000 ids = plafond atteint : cette tranche est INCOMPLETE,")
+                print("        il faut la redecouper plus finement.")
             lot = ids if args.all else ids[: args.collect]
             a_payer = [i for i in lot if str(i) not in seen]
             print(f"   → {len(lot)} posts visés, {len(a_payer)} à collecter "
                   f"({len(lot) - len(a_payer)} déjà en base)")
             for rang, pid in enumerate(a_payer, 1):
+                if args.budget and n_written >= args.budget:
+                    print(f"\n   Budget de {args.budget} posts atteint — collecte interrompue.")
+                    print("   Relance la meme commande pour reprendre ou l'augmenter.")
+                    budget_atteint = True
+                    break
                 seen.add(str(pid))
                 p = collect(path, pid)
                 if not p:
