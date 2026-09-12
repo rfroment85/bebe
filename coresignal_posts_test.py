@@ -188,15 +188,45 @@ def search(name, payload):
     return path, ids, total, sans_tri
 
 
-def collect(path, pid):
-    r = requests.get(f"{BASE}/{path}/collect/{pid}", headers=HEADERS, timeout=60)
-    if r.status_code != 200:
-        print(f"   collect {pid} → {r.status_code}")
-        return None
-    try:
-        return r.json()
-    except ValueError:
-        return None
+def collect(path, pid, attempts=3):
+    """GET un post, en réessayant les erreurs transitoires.
+
+    Sans retry, un 503 passager fait perdre le post — et à 1 crédit l'unité
+    sur une collecte de plusieurs centaines, ces trous coûtent cher à combler.
+    """
+    for i in range(attempts):
+        r = requests.get(f"{BASE}/{path}/collect/{pid}", headers=HEADERS, timeout=60)
+        if r.status_code == 200:
+            try:
+                return r.json()
+            except ValueError:
+                return None
+        if r.status_code not in TRANSIENT or i == attempts - 1:
+            print(f"   collect {pid} → {r.status_code}")
+            return None
+        time.sleep(2 ** (i + 1))
+    return None
+
+
+def deja_collectes(chemin):
+    """Ids déjà présents dans le .jsonl, pour ne jamais repayer un post.
+
+    Un post collecté coûte 1 crédit : reprendre une collecte interrompue doit
+    repartir d'où elle s'est arrêtée, pas du début.
+    """
+    ids = set()
+    if not os.path.exists(chemin):
+        return ids
+    with open(chemin, encoding="utf-8") as f:
+        for ligne in f:
+            ligne = ligne.strip()
+            if not ligne:
+                continue
+            try:
+                ids.add(str(json.loads(ligne).get("id")))
+            except ValueError:
+                continue
+    return ids
 
 
 def summarize(p):
@@ -263,14 +293,22 @@ def main():
     ap.add_argument("--tri", choices=["date", "reactions"], default="date",
                     help="ordre de collecte : 'date' (plus récents) ou 'reactions' "
                          "(plus relayés — échantillon plus représentatif)")
+    ap.add_argument("--all", action="store_true",
+                    help="collecter TOUS les résultats de chaque question "
+                         "(1 crédit/post — vérifie le total avec --dry-run avant)")
     ap.add_argument("--out", default="coresignal_posts_sample.jsonl")
     args = ap.parse_args()
 
     tri = "reaction_count" if args.tri == "reactions" else "date_published"
     queries = build_queries(args.since, tri)
 
-    totals, seen, n_written, tris_ignores, reacs = {}, set(), 0, [], {}
-    out = None if args.dry_run else open(args.out, "w", encoding="utf-8")
+    totals, n_written, tris_ignores, reacs = {}, 0, [], {}
+    # Reprise : on repart du fichier existant plutôt que de l'écraser, et on
+    # ouvre en ajout. Un run interrompu ne coûte donc jamais deux fois.
+    seen = set() if args.dry_run else deja_collectes(args.out)
+    if seen:
+        print(f"Reprise : {len(seen)} posts déjà dans {args.out}, ils ne seront pas repayés.\n")
+    out = None if args.dry_run else open(args.out, "a", encoding="utf-8")
     try:
         for name, payload in queries.items():
             path, ids, total, sans_tri = search(name, payload)
@@ -279,18 +317,21 @@ def main():
             totals[name] = total if total is not None else ("erreur" if path is None else len(ids))
             if args.dry_run or not ids or name.startswith("B"):
                 continue  # les baselines servent à compter, pas à collecter
-            for pid in ids[: args.collect]:
-                if pid in seen:
-                    continue
-                seen.add(pid)
+            lot = ids if args.all else ids[: args.collect]
+            a_payer = [i for i in lot if str(i) not in seen]
+            print(f"   → {len(lot)} posts visés, {len(a_payer)} à collecter "
+                  f"({len(lot) - len(a_payer)} déjà en base)")
+            for rang, pid in enumerate(a_payer, 1):
+                seen.add(str(pid))
                 p = collect(path, pid)
                 if not p:
                     continue
                 p["_query"] = name
                 out.write(json.dumps(p, ensure_ascii=False) + "\n")
+                out.flush()  # crash-safe : chaque post payé est sur le disque
                 reacs.setdefault(name, []).append(p.get("reaction_count") or 0)
                 n_written += 1
-                print(summarize(p))
+                print(f"   [{rang}/{len(a_payer)}]" + summarize(p)[3:])
                 time.sleep(0.05)
     finally:
         if out:
